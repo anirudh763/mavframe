@@ -1,0 +1,10 @@
+build*/
+corpus/
+/crash-*
+/leak-*
+/timeout-*
+/oom-*
+*.o
+*.bin
+__pycache__/
+.pytest_cache/

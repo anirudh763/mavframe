@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python test dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Build (warnings are errors)
+        run: |
+          CC=${{ matrix.cc }} cmake -S . -B build
+          cmake --build build
+      - name: C unit tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Generated CRC_EXTRA table is up to date
+        run: python3 tools/gen_crc_extra.py | diff - src/mavframe_crc_extra_common.h
+      - name: Differential tests against pymavlink
+        run: python3 -m pytest tests -v
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python test dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Build with ASan + UBSan
+        run: |
+          CC=gcc cmake -S . -B build-asan -DMAVFRAME_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-asan
+      - name: C unit tests under ASan + UBSan
+        run: ctest --test-dir build-asan --output-on-failure
+      - name: Differential tests with the sanitized dump tool
+        run: MAVFRAME_DUMP=$PWD/build-asan/mavframe-dump python3 -m pytest tests -v
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make sure the libFuzzer runtime is present
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev || true
+      - name: Build the libFuzzer target
+        run: |
+          CC=clang cmake -S . -B build-fuzz -DMAVFRAME_FUZZ=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-fuzz --target fuzz_parse
+      - name: Fuzz for 60 seconds
+        run: |
+          mkdir -p corpus
+          ./build-fuzz/fuzz_parse -max_total_time=60 -max_len=2048 corpus fuzz/seeds fuzz/regressions
