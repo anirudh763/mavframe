@@ -84,3 +84,30 @@ export const contrast = (a, b) => { const [x, y] = [lumOf(a), lumOf(b)].sort((p,
 // The colour actually painted behind an element: the nearest ancestor-or-self with an opaque background.
 export const bgFn = `(el) => { for (let n = el; n; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor;
   if (!/rgba\\(.*, 0\\)$/.test(c) && c !== "transparent") return c; } return "rgb(255, 255, 255)"; }`;
+
+// Interactive elements whose target is smaller than 44 x 44 CSS px. An input's target is its
+// label when it has one (the label is the click area; the file input itself is visually hidden).
+// Links inside running text are exempt (WCAG 2.5.8 "inline" exception); the off-screen skip link
+// is checked only when focused.
+export const smallTargets = (page) => page.evaluate(() => {
+  const out = [];
+  const sel = 'a[href], button, select, input, [role="tab"], [tabindex="0"]';
+  for (const el of document.querySelectorAll(sel)) {
+    if (el.classList.contains("skip")) continue;
+    let box = el.getBoundingClientRect();
+    if (el.matches("input")) {
+      const label = el.closest("label") || (el.id && document.querySelector(`label[for="${el.id}"]`));
+      if (label) box = label.getBoundingClientRect();
+    }
+    if (box.width === 0 && box.height === 0) continue; // not rendered (hidden screen, closed sheet)
+    if (getComputedStyle(el).visibility === "hidden") continue;
+    if (el.tagName === "A" && getComputedStyle(el).display === "inline") {
+      const p = el.parentElement;
+      if (p && p.textContent.trim().length > el.textContent.trim().length) continue;
+    }
+    if (box.height < 43.5 || box.width < 43.5) {
+      out.push(`${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""}${el.className && typeof el.className === "string" ? "." + el.className.split(" ")[0] : ""} "${(el.getAttribute("aria-label") || el.textContent).trim().slice(0, 24)}" ${Math.round(box.width)}x${Math.round(box.height)}`);
+    }
+  }
+  return out;
+});

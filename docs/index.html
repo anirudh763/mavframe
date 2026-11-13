@@ -113,9 +113,8 @@
         <h1 id="h-frames" tabindex="-1">Frames</h1>
         <div id="frames-empty" class="empty" hidden></div>
         <div id="frames-body" hidden>
-          <p class="lede" id="frames-lede"></p>
           <p class="counts" id="frames-counts"></p>
-          <p class="muted small" id="frames-assumptions">Sequence gaps are estimates that assume one fully observed channel per sender and in-order arrival. Signatures are shown, not verified.</p>
+          <p class="muted small" id="frames-assumptions">Gap counts assume one fully observed channel per sender and in-order arrival. Signatures are not verified.</p>
 
           <section class="box timeline-box" aria-labelledby="h-timeline">
             <div class="box-header bar">
@@ -123,7 +122,7 @@
               <ul class="legend" aria-label="Timeline markers">
                 <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC failure</li>
                 <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
-                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Unsupported, bad flags, duplicate or out-of-order seq</li>
+                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Unsupported, bad flags, repeated or late seq</li>
                 <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-density" x="1" y="4" width="10" height="7"/></svg>Frames per interval</li>
               </ul>
             </div>
@@ -148,9 +147,10 @@
               <select id="msg-filter"><option value="">All messages</option></select>
             </span>
             <button type="button" class="btn" id="clear-filters" hidden>Clear filters</button>
-            <span class="spacer"></span>
-            <button type="button" class="btn" id="prev-issue">Previous issue</button>
-            <button type="button" class="btn" id="next-issue">Next issue</button>
+            <div class="issue-step" role="group" aria-label="Step through issues">
+              <button type="button" class="btn" id="prev-issue">Previous issue</button>
+              <button type="button" class="btn" id="next-issue">Next issue</button>
+            </div>
           </div>
 
           <div class="analyzer">
@@ -159,16 +159,16 @@
               <div class="table-wrap list-wrap" id="frame-region" role="region" aria-label="Frame rows" tabindex="0">
                 <table id="frame-table" class="dense rows">
                   <thead><tr>
-                    <th scope="col" class="num">Time (s)</th><th scope="col" class="num">Offset</th><th scope="col">Message</th>
-                    <th scope="col">Sys:Comp</th><th scope="col" class="num">Seq</th><th scope="col">Check</th><th scope="col">Note</th>
+                    <th scope="col">Check</th><th scope="col">Message</th><th scope="col" class="num">Time (s)</th><th scope="col" class="num">Offset</th>
+                    <th scope="col">Sys:Comp</th><th scope="col" class="num">Seq</th><th scope="col">Note</th>
                   </tr></thead>
                   <tbody></tbody>
                 </table>
               </div>
               <div class="pager">
-                <button type="button" class="btn" id="prev-page">Previous page</button>
+                <button type="button" class="btn" id="prev-page" aria-label="Previous page">Previous</button>
                 <span id="page-info" class="muted"></span>
-                <button type="button" class="btn" id="next-page">Next page</button>
+                <button type="button" class="btn" id="next-page" aria-label="Next page">Next</button>
               </div>
             </div>
             <div class="pane pane-detail" id="analyzer-detail"></div>
@@ -189,7 +189,6 @@
           <h2 id="detail-title" class="detail-title" tabindex="-1"></h2>
           <dl id="detail-summary" class="summary"></dl>
           <div id="crc-compare" class="crc-compare"></div>
-          <div id="detail-notes"></div>
           <div class="tabs" role="tablist" aria-label="Frame views" id="tablist">
             <button type="button" role="tab" id="tab-decoded" aria-controls="panel-decoded" aria-selected="true">Decoded</button>
             <button type="button" role="tab" id="tab-bytes" aria-controls="panel-bytes" aria-selected="false" tabindex="-1">Bytes</button>
@@ -197,6 +196,7 @@
           </div>
           <div class="panes">
             <div class="tree-col">
+              <div id="detail-notes"></div>
               <div id="panel-header" class="panel" role="tabpanel" aria-labelledby="tab-header"></div>
               <div id="panel-decoded" class="panel" role="tabpanel" aria-labelledby="tab-decoded"></div>
             </div>
@@ -214,18 +214,15 @@
             </div>
           </div>
           <p id="field-status" class="sr-only" role="status" aria-live="polite"></p>
-          <div class="export">
-            <h3 id="h-export" class="sub-h">Export this finding</h3>
-            <p class="muted small">A JSON file with the mavframe version, file name, size and SHA-256, the offsets, CRC wire vs computed and the parser's assumptions.</p>
-            <div class="export-row">
-              <button type="button" class="btn primary" id="export-finding">Export finding (JSON)</button>
-              <span class="check"><input type="checkbox" id="include-payload"><label for="include-payload">Include raw payload bytes of every message (may contain GPS/position)</label></span>
-            </div>
-            <p id="export-status" class="small" role="status" aria-live="polite"></p>
-          </div>
-          <div class="step">
-            <button type="button" class="btn" id="prev-row">Previous row</button>
-            <button type="button" class="btn" id="next-row">Next row</button>
+          <div class="export" role="group" aria-label="Export and step">
+            <button type="button" class="btn primary" id="export-finding" aria-describedby="export-help">Export finding (JSON)</button>
+            <label class="check" for="include-payload"><input type="checkbox" id="include-payload">Include all payload bytes (may contain GPS)</label>
+            <span class="step">
+              <button type="button" class="btn" id="prev-row">Previous row</button>
+              <button type="button" class="btn" id="next-row">Next row</button>
+            </span>
+            <p id="export-help" class="sr-only">Saves this row as JSON: mavframe version, file name, size and SHA-256, offsets, CRC wire vs computed and the parser's assumptions. Payload bytes are left out unless the message carries no position, or you include all payload bytes; they may contain GPS/position data.</p>
+            <p id="export-status" class="small export-status" role="status" aria-live="polite"></p>
           </div>
         </div>
       </div>

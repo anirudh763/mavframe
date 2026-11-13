@@ -37,6 +37,16 @@ const openPage = (opts) => open(browser, base, opts);
 const statusText = (page) => page.textContent("#status");
 const metric = (page, id) => page.$eval(`#${id}`, (dd) => dd.firstChild.textContent.replace(/,/g, ""));
 const upload = (page, file) => page.setInputFiles("#file", file);
+// Hold the sample download until the test releases it, so the "Loading" phase is asserted
+// deterministically instead of racing a timer (CI can be slower or faster than any delay).
+async function holdSample(page) {
+  let release;
+  const gate = new Promise((ok) => { release = ok; });
+  let requested;
+  const seen = new Promise((ok) => { requested = ok; });
+  await page.route("**/sample/sample-flight.tlog", async (r) => { requested(); await gate; await r.continue(); });
+  return { seen, release: () => release() };
+}
 async function goFrames(page, query = "") {
   await page.goto(base + "#/frames" + query);
   await page.waitForFunction(() => document.querySelector("#frame-table tbody tr") && !document.getElementById("screen-frames").hidden);
@@ -45,10 +55,12 @@ async function goFrames(page, query = "") {
 test("Load engineering sample shows the generator's exact counts and per-sender rates", async () => {
   const page = await openPage();
   // While the sample downloads, the old result's status must not stay up.
-  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
+  const hold = await holdSample(page);
   await page.getByRole("button", { name: "Load engineering sample" }).click();
-  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
+  await hold.seen; // the request is in flight and held: this is exactly the loading phase
+  assert.equal(await statusText(page), "Loading sample-flight.tlog…");
   assert.equal(await page.isDisabled("#load-sample"), true);
+  hold.release();
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await metric(page, "m-crc"), String(truth.crc_errors));
@@ -100,11 +112,18 @@ test("Next and Previous issue step through CRC failures and sequence gaps", asyn
   assert.match(await page.textContent("#crc-compare"), /Match: valid CRC/);
   await page.getByRole("button", { name: "Previous issue" }).click();
   await page.waitForFunction((o) => document.getElementById("detail-title").textContent.endsWith(o), truth.crc_error_offsets[0].toLocaleString("en-US"));
-  // Previous row / Next row move one row.
-  await page.getByRole("button", { name: "Next row" }).click();
-  await page.waitForFunction((o) => !document.getElementById("detail-title").textContent.endsWith(o), truth.crc_error_offsets[0].toLocaleString("en-US"));
   assert.deepEqual(page.errors, []);
   await page.close();
+  // Previous row / Next row (narrow Frame details) move one row.
+  const narrow = await openPage({ viewport: { width: 375, height: 800 }, hash: "#/frames/5" });
+  await narrow.waitForSelector("#crc-compare .v");
+  const t0 = await narrow.textContent("#h-details");
+  await narrow.getByRole("button", { name: "Next row" }).click();
+  await narrow.waitForFunction(() => /^#\/frames\/6/.test(location.hash));
+  assert.notEqual(await narrow.textContent("#h-details"), t0);
+  await narrow.getByRole("button", { name: "Previous row" }).click();
+  await narrow.waitForFunction(() => /^#\/frames\/5/.test(location.hash));
+  await narrow.close();
 });
 
 test("a 50 MB capture is parsed in chunks without freezing the page", async () => {
@@ -155,9 +174,11 @@ test("keyboard only: load the sample, go to Frames, step to an issue, move throu
   }
   await tabTo("#load-sample");
   assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), "none", "focus indicator visible");
-  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
+  const hold = await holdSample(page);
   await page.keyboard.press("Enter");
-  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
+  await hold.seen;
+  assert.equal(await statusText(page), "Loading sample-flight.tlog…");
+  hold.release();
   await waitParsed(page, "sample-flight.tlog");
   await page.waitForFunction(() => document.activeElement.id === "load-sample");
   await tabTo("#file");
@@ -262,7 +283,10 @@ test("parsing can be cancelled; the previous capture stays", async () => {
   const big = path.join(CASES, "cancel.tlog");
   fs.writeFileSync(big, Buffer.concat(Array(400).fill(sample)));
   await upload(page, big);
-  await page.getByRole("button", { name: "Cancel" }).click();
+  // Click as soon as Cancel shows: the progress bar keeps updating beside it, so Playwright's
+  // "stable position" wait could outlast the whole parse on a fast machine.
+  await page.waitForSelector("#cancel:not([hidden])");
+  await page.getByRole("button", { name: "Cancel" }).click({ force: true });
   await page.waitForFunction(() => /Cancelled parsing cancel.tlog. Still showing sample-flight.tlog/.test(document.getElementById("status").textContent));
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await page.isHidden("#cancel"), true);
@@ -404,7 +428,7 @@ test("monospace only for offsets and hex; one face for headers; 44 px controls",
     const row = document.querySelector("#frame-table tbody tr");
     return {
       heads: [...document.querySelectorAll("#frame-table th")].map((th) => getComputedStyle(th).fontFamily),
-      time: getComputedStyle(row.cells[0]).fontFamily, offset: getComputedStyle(row.cells[1]).fontFamily, body: ff("body"),
+      time: getComputedStyle(row.cells[2]).fontFamily, offset: getComputedStyle(row.cells[3]).fontFamily, body: ff("body"),
       sizes: [...document.querySelectorAll(".chip, #next-issue, #prev-issue, #msg-filter")].map((e) => Math.round(e.getBoundingClientRect().height)),
     };
   });
@@ -413,6 +437,14 @@ test("monospace only for offsets and hex; one face for headers; 44 px controls",
   assert.equal(r.time, r.body, "times use the UI face (tabular numbers)");
   assert.match(r.offset, /monospace/, "offsets are monospace");
   assert.ok(r.sizes.every((h) => h >= 44), `control heights ${r.sizes.join(",")}`);
+  // Field tree: hex values in monospace, decimal values in the UI face.
+  await page.locator("#frame-table tbody tr a").first().click();
+  await page.waitForSelector("#panel-header .fieldbtn");
+  const vals = await page.$$eval("#panel-header td.val", (tds) => tds.map((t) => [t.textContent, getComputedStyle(t).fontFamily]));
+  for (const [text, family] of vals) {
+    if (/^0x/.test(text)) assert.match(family, /monospace/, `${text} is mono`);
+    else assert.doesNotMatch(family, /monospace/, `${text} uses the UI face`);
+  }
   await page.close();
 });
 

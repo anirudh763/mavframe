@@ -37,7 +37,7 @@ layout:
 The inspector is a Wireshark-style packet analyzer over the real parser output, with three linked views:
 
 1. **Frame list**: one row per valid frame and per rejected candidate (CRC failed, unsupported id, bad flags), in byte order.
-   Columns: Time (s), Offset, Message, Sys:Comp, Seq, Check, Note. Filters are chips (All, Issues, CRC failed, Unsupported,
+   Columns: Check, Message, Time (s), Offset, Sys:Comp, Seq, Note (Check first so a CRC failure is visible at 320px). Filters are chips (All, Issues, CRC failed, Unsupported,
    Valid CRC) and a Message select; the filter, page and selection are in the URL.
 2. **Field tree**: the selected row's tlog timestamp, header fields, decoded payload fields, CRC and signature, each a button
    with its byte range.
@@ -46,8 +46,12 @@ The inspector is a Wireshark-style packet analyzer over the real parser output, 
 Selection is linked both ways: a field highlights its bytes, a click on a byte selects its field, and with the bytes focused
 Left/Right move between fields (the keyboard path). The CRC wire and computed values sit side by side above the panes.
 
-- At >= 1000px, `#/frames/<index>` keeps the list and shows the field tree and bytes below it (side by side from 1360px).
-  Selecting a row keeps keyboard focus in the list; arrow keys move the selection.
+- At >= 1000px the Frames screen fills the viewport height (no page scrolling): a compact header (H1 with counts, the
+  assumption line, timeline, filters) above two panes. The frame list scrolls on the left; the right column holds the
+  CRC comparison, the field tree and the bytes, each scrolling inside its own pane, plus Export. `#/frames/<index>`
+  selects a row on this screen: title, H1 and breadcrumb stay "Frames" and there is no Back link. Selecting a row
+  keeps keyboard focus in the list; arrow keys move the selection. Tested at 1440x900 and 1024x768.
+- The hex pane shows 16 bytes per row and falls back to 8 or 4 when a row (with its ASCII column) does not fit.
 - Below 1000px the same URL is its own **Frame details** screen with **Decoded / Bytes / Header** tabs (ARIA tabs, arrow keys).
 
 Reference: Wireshark User's Guide, "Working With Captured Packets"
@@ -65,8 +69,18 @@ corresponding bytes in the byte view."
 | anything else under `#/` | Not found, with a link to Capture |
 
 Old single-page links (`#view=issues&msg=30&sel=f12`) are mapped to these routes. Every route change sets
-`document.title` to "Screen – Mavframe", updates the breadcrumb and `aria-current`, and moves focus to the new screen's H1
-(tabindex=-1, no outline). Selecting a row on the same wide screen keeps focus on the row instead.
+`document.title` to "Screen – Mavframe" for the screen actually shown (Frames on wide screens, Frame details on narrow
+ones), updates the breadcrumb and `aria-current`, and moves focus to the new screen's H1 (tabindex=-1, no outline).
+Selecting a row on the same wide screen keeps focus on the row instead.
+
+## Targets and type
+
+- Every interactive element is at least 44 x 44 px (nav links, wordmark, Back, Menu, theme toggle, chips, selects, tabs,
+  row links, field buttons, pager, export button and the checkbox's label). Links inside sentences are the WCAG 2.5.8
+  inline exception. `tests/web/test_routes.mjs` measures all of them on every screen at 320 and 1440px and proves the
+  check fails when nav links, tabs and Menu are shrunk to 24px.
+- Monospace only for hex bytes, byte offsets and hex values (CRC, flags); decimal field values use the UI face. Text
+  wraps at word boundaries; only monospace hex values may break anywhere.
 
 ## Honesty in the UI
 
@@ -84,5 +98,15 @@ Every data screen has loading ("Parsing the capture…"), empty ("No capture is 
 ## Gates
 
 `tests/web/test_routes.mjs` (root visual gate, analyzer, export), `tests/web/test_ui.mjs` (behaviour, contrast) and
-`tests/web/test_finding.mjs` (row model and export) must pass. axe-core: 0 violations on every screen, light and dark,
+`tests/web/test_finding.mjs` (row model and export) must pass.
+
+## Rules applied from the reference repos
+
+- ui-ux-pro-max-skill `src/ui-ux-pro-max/templates/base/quick-reference.md`: line 88 `touch-target-size` (44 px), line 69
+  `color-not-only` (every status has text), line 53 navigation (predictable Back, deep linking).
+- anti-slop `skills/antislop-ui/SKILL.md` lines 20-25 (no default gradients) and 39-43 (shadow only as an elevation marker:
+  this UI is flat); `skills/antislop-layoutmobile/SKILL.md` lines 41-42 (design the 600-1024px band: Menu sheet below
+  1000px, analyzer tested at 1024x768).
+- awesome-design-md: token front matter plus prose order for this file; `design-md/linear.app/DESIGN.md` line 264 (mono
+  reserved for code) informs the mono-only-for-hex rule. axe-core: 0 violations on every screen, light and dark,
 at 1280 and 320 px.

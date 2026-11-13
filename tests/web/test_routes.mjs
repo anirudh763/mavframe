@@ -7,7 +7,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { chromium, DOCS, truth, startServer, openPage as open, waitParsed, cspViolations, axeViolations, settle } from "./browser.mjs";
+import { chromium, DOCS, truth, startServer, openPage as open, waitParsed, cspViolations, axeViolations, settle, smallTargets } from "./browser.mjs";
 
 let server;
 let base;
@@ -58,16 +58,16 @@ test("Frames shows actual rows: time, offset, message, sys:comp, seq and CRC sta
   const page = await openPage({ hash: "#/frames" });
   assert.equal(await h1Text(page), "Frames");
   const head = await page.$$eval("#frame-table thead th", (ths) => ths.map((t) => t.textContent.trim()));
-  assert.deepEqual(head.slice(0, 6), ["Time (s)", "Offset", "Message", "Sys:Comp", "Seq", "Check"]);
+  assert.deepEqual(head.slice(0, 6), ["Check", "Message", "Time (s)", "Offset", "Sys:Comp", "Seq"]);
   const first = await page.$$eval("#frame-table tbody tr:first-child td", (tds) => tds.map((t) => t.textContent.trim()));
-  assert.deepEqual(first.slice(0, 6), ["0.000", "8", "HEARTBEAT", "1:1", "0", "Valid CRC"]);
+  assert.deepEqual(first.slice(0, 6), ["Valid CRC", "HEARTBEAT", "0.000", "8", "1:1", "0"]);
   // The table scrolls inside its own labelled region.
   assert.equal(await page.getAttribute("#frame-region", "role"), "region");
   assert.ok(await page.getAttribute("#frame-region", "aria-label"));
   // Filter to CRC failures: exactly the generator's three offsets, each labelled in text.
   await page.getByRole("button", { name: "CRC failed", exact: true }).click();
   await waitRoute(page, /check=crc/);
-  const rows = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => [tr.dataset.off, tr.cells[5].textContent.trim(), tr.cells[2].textContent.trim()]));
+  const rows = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => [tr.dataset.off, tr.cells[0].textContent.trim(), tr.cells[1].textContent.trim()]));
   assert.deepEqual(rows.map((r) => Number(r[0])), truth.crc_error_offsets);
   assert.deepEqual(rows.map((r) => r[1]), ["CRC failed", "CRC failed", "CRC failed"]);
   assert.equal(rows[0][2], "ATTITUDE");
@@ -92,10 +92,10 @@ test("CRC failure and unsupported message ids stay separate filters and labels",
   await page.waitForFunction(() => /^malformed.bin:/.test(document.getElementById("status").textContent) && !document.getElementById("load-sample").disabled);
   await page.goto(base + "#/frames?check=unsupported");
   await page.waitForSelector("#frame-table tbody tr");
-  const unsup = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[5].textContent.trim()));
+  const unsup = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[0].textContent.trim()));
   assert.ok(unsup.includes("Unsupported (not checked)") && unsup.every((t) => /\(not checked\)$/.test(t)), unsup.join(","));
   await page.getByRole("button", { name: "CRC failed", exact: true }).click();
-  const crc = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[5].textContent.trim()));
+  const crc = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[0].textContent.trim()));
   assert.ok(crc.length >= 1 && crc.every((t) => t === "CRC failed"), crc.join(","));
   fs.rmSync(dir, { recursive: true });
   await page.close();
@@ -110,14 +110,17 @@ test("packet analyzer (1440 px): list, field tree and bytes side by side; field 
   const off = Number(await row.getAttribute("data-off"));
   await row.locator("a").click();
   await waitRoute(page, /^#\/frames\/\d+\?msg=30/);
-  assert.equal(await page.title(), "Frame details – Mavframe");
+  // The selection stays on the Frames screen: title, H1 and breadcrumb all say Frames.
+  assert.equal(await page.title(), "Frames – Mavframe");
   assert.equal(await h1Text(page), "Frames", "still the Frames screen");
+  assert.deepEqual(await page.$$eval('nav[aria-label="Breadcrumb"] li', (l) => l.map((x) => x.textContent)), ["Mavframe", "Frames"]);
+  assert.equal(await page.isVisible("#back-link"), false, "no Back on the non-contextual screen");
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-current")), "true", "focus stays on the selected row");
   assert.equal(await page.textContent("#detail-title"), `ATTITUDE at offset ${off.toLocaleString("en-US")}`);
   for (const sel of ["#frame-region", "#panel-header", "#panel-decoded", "#hex"]) assert.ok(await page.isVisible(sel), `${sel} visible`);
   assert.equal(await page.isVisible("#tablist"), false, "no tabs when all panes fit");
-  const boxes = await page.evaluate(() => ["panel-decoded", "panel-bytes"].map((id) => document.getElementById(id).getBoundingClientRect().left));
-  assert.ok(boxes[1] > boxes[0] + 200, "field tree and bytes side by side");
+  const hexFit = await page.$eval("#hex", (e) => [e.scrollWidth, e.clientWidth]);
+  assert.ok(hexFit[0] <= hexFit[1], `hex rows (with ASCII) fit the pane: ${hexFit.join(" > ")}`);
   assert.match(await page.textContent("#crc-compare"), /Match: valid CRC/);
   // Field -> bytes: pitch is a float at payload offset 8.
   await page.locator("#panel-decoded").getByRole("button", { name: "pitch", exact: true }).click();
@@ -147,6 +150,96 @@ test("packet analyzer (1440 px): list, field tree and bytes side by side; field 
   await page.keyboard.press("ArrowDown");
   await page.waitForFunction((b) => document.activeElement.dataset.pos !== b && document.activeElement.getAttribute("aria-current") === "true", before);
   assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+for (const [width, height] of [[1440, 900], [1024, 768]]) {
+  test(`packet analyzer at ${width}x${height}: after a row click the list, field tree and bytes are all inside the viewport`, async () => {
+    const page = await openPage({ viewport: { width, height } });
+    await page.goto(base + "#/frames");
+    await page.waitForSelector("#frame-table tbody tr a");
+    await page.locator("#frame-table tbody tr a").nth(3).click();
+    await waitRoute(page, /^#\/frames\/3/);
+    await page.waitForSelector("#hex .b");
+    const r = await page.evaluate(() => {
+      const box = (s) => { const b = document.querySelector(s).getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, h: b.height }; };
+      return { list: box("#frame-region"), tree: box(".tree-col"), bytes: box("#panel-bytes"), exp: box("#export-finding"),
+        scroll: document.scrollingElement.scrollHeight, iw: innerWidth, ih: innerHeight,
+        rows: [...document.querySelectorAll("#frame-table tbody tr")].filter((t) => { const b = t.getBoundingClientRect(); const R = document.getElementById("frame-region").getBoundingClientRect(); return b.top >= R.top && b.bottom <= R.bottom; }).length };
+    });
+    assert.ok(r.scroll <= r.ih, `no page scrolling: ${r.scroll} > ${r.ih}`);
+    for (const k of ["list", "tree", "bytes", "exp"]) {
+      const b = r[k];
+      assert.ok(b.top >= 0 && b.bottom <= r.ih && b.left >= 0 && b.right <= r.iw, `${k} inside the viewport: ${JSON.stringify(b)}`);
+      assert.ok(b.h >= 40, `${k} is at least 40px tall (${Math.round(b.h)})`);
+    }
+    assert.ok(r.rows >= 4, `${r.rows} list rows visible`);
+    console.log(`# analyzer ${width}x${height}: ${r.rows} rows visible, tree ${Math.round(r.tree.h)}px, bytes ${Math.round(r.bytes.h)}px, page ${r.scroll}px tall`);
+    await page.close();
+  });
+}
+
+test("route, title and H1 agree: Frames on wide screens, Frame details on narrow ones", async () => {
+  for (const [width, title, h1, crumbs] of [[1440, "Frames – Mavframe", "Frames", ["Mavframe", "Frames"]], [375, "Frame details – Mavframe", "ATTITUDE at offset 13,866", ["Mavframe", "Frames", "Frame details"]]]) {
+    const page = await openPage({ viewport: { width, height: 900 } });
+    const href = await rowHref(page, 13866);
+    await page.goto(base + href);
+    await page.waitForSelector("#crc-compare .v");
+    assert.equal(await page.title(), title, `${width}px title`);
+    assert.equal(await h1Text(page), h1, `${width}px H1`);
+    assert.deepEqual(await page.$$eval('nav[aria-label="Breadcrumb"] li', (l) => l.map((x) => x.textContent)), crumbs);
+    await page.close();
+  }
+});
+
+test("44 px targets: every interactive element on every screen at 320 and 1440 (and the check fails when shrunk)", async () => {
+  for (const width of [320, 1440]) {
+    const page = await openPage({ viewport: { width, height: 900 } });
+    const href = await rowHref(page, 13866);
+    const states = [["#/capture", null], ["#/frames", null], [href, null], ["#/help", null], ["#/nope", null]];
+    if (width < 1000) states.push([href, "Bytes"], [href, "Header"], ["#/frames", "menu"]);
+    let checked = 0;
+    for (const [hash, extra] of states) {
+      await page.goto(base + hash);
+      await page.waitForFunction(() => [...document.querySelectorAll("h1")].some((h) => h.offsetParent !== null));
+      if (hash.startsWith("#/frames")) await page.waitForFunction(() => [...document.querySelectorAll("#frame-table tbody tr, #detail-summary")].some((e) => e.offsetParent !== null));
+      if (extra === "menu") await page.getByRole("button", { name: "Menu", exact: true }).click();
+      else if (extra) await page.getByRole("tab", { name: extra }).click();
+      await settle(page);
+      assert.deepEqual(await smallTargets(page), [], `${hash} ${extra || ""} at ${width}px`);
+      checked++;
+      if (extra === "menu") await page.keyboard.press("Escape");
+    }
+    // Sabotage: shrinking nav links, tabs and Menu to 24px must be caught.
+    await page.goto(base + (width < 1000 ? href : "#/frames"));
+    await page.waitForFunction(() => [...document.querySelectorAll("h1")].some((h) => h.offsetParent !== null));
+    await page.evaluate(() => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync('.nav a, [role="tab"], #menu-btn { min-height: 24px !important; height: 24px !important; padding-top: 0 !important; padding-bottom: 0 !important; }');
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    });
+    if (width < 1000) await page.getByRole("button", { name: "Menu", exact: true }).click();
+    const caught = await smallTargets(page);
+    const want = width < 1000 ? [/#menu-btn|"Menu"/, /"Capture"/, /tab-bytes|"Bytes"/] : [/"Capture"/, /"Frames"/, /"Format help"/];
+    for (const re of want) assert.ok(caught.some((x) => re.test(x)), `sabotage at ${width}px caught ${re}: ${caught.join(" | ")}`);
+    console.log(`# targets ${width}px: 0 under 44px on ${checked} screen states; sabotage caught ${caught.length}`);
+    await page.close();
+  }
+});
+
+test("320 px: the CRC status of each row is visible without sideways scrolling", async () => {
+  const page = await openPage({ viewport: { width: 320, height: 800 } });
+  await page.goto(base + "#/frames?check=crc");
+  await page.waitForSelector("#frame-table tbody tr");
+  const r = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => { const b = tr.cells[0].getBoundingClientRect(); return [tr.cells[0].textContent.trim(), b.left >= 0 && b.right <= innerWidth]; }));
+  assert.equal(r.length, 3);
+  for (const [text, inside] of r) { assert.equal(text, "CRC failed"); assert.ok(inside, "CRC status cell inside the viewport"); }
+  // Field tree words wrap at word boundaries only (no mid-word breaks).
+  const href = await rowHref(page, 13866);
+  await page.goto(base + href);
+  await page.waitForSelector("#panel-decoded");
+  const wrap = await page.$$eval("#detail .tree td:not(.mono)", (tds) => [...new Set(tds.map((t) => getComputedStyle(t).overflowWrap))]);
+  assert.ok(!wrap.includes("anywhere"), `overflow-wrap ${wrap.join(",")}`);
   await page.close();
 });
 
@@ -302,19 +395,22 @@ for (const width of [375, 1440]) {
     await waitRoute(page, narrow ? /tab=header/ : /f=crc/);
     const detailUrl = page.url();
     await page.goBack();
+    await waitRoute(page, /^#\/frames\?/);
     await page.waitForFunction(() => document.title === "Frames – Mavframe");
     assert.equal(await page.getAttribute('[data-check="crc"]', "aria-pressed"), "true", "check filter restored");
     assert.equal(await page.inputValue("#msg-filter"), "30", "message filter restored");
     assert.equal(await page.locator("#frame-table tbody tr").count(), 1);
     assert.equal(await focusedH1(page), "Frames");
     await page.goForward();
-    await page.waitForFunction(() => document.title === "Frame details – Mavframe");
+    await waitRoute(page, /^#\/frames\/\d+/);
     if (narrow) assert.equal(await page.getAttribute("#tab-header", "aria-selected"), "true", "tab restored");
     else assert.equal(await page.locator("#hex .b.hl").count(), 2, "selected field restored");
-    // The header Back link returns to the filtered list too.
-    await page.click("#back-link");
-    await page.waitForFunction(() => document.title === "Frames – Mavframe");
-    assert.equal(await page.getAttribute('[data-check="crc"]', "aria-pressed"), "true");
+    // The header Back link (narrow Frame details) returns to the filtered list too.
+    if (narrow) {
+      await page.click("#back-link");
+      await page.waitForFunction(() => document.title === "Frames – Mavframe");
+      assert.equal(await page.getAttribute('[data-check="crc"]', "aria-pressed"), "true");
+    }
     // Deep link straight into details in a new tab.
     const p2 = await openPage({ hash: detailUrl.slice(detailUrl.indexOf("#")), viewport });
     await p2.waitForSelector("#crc-compare");
@@ -406,7 +502,7 @@ test("gate 7: no console errors or CSP violations across all routes; primary col
 
 test("screenshots for the README (light, 2x, real sample)", { skip: !process.env.SCREENSHOT }, async () => {
   fs.mkdirSync(path.join(DOCS, "screenshots"), { recursive: true });
-  for (const [width, height] of [[1440, 1000], [320, 900]]) {
+  for (const [width, height] of [[1440, 900], [320, 900]]) {
     const page = await openPage({ viewport: { width, height }, deviceScaleFactor: 2 });
     await page.goto(base + "#/frames");
     await page.waitForSelector("#frame-table tbody tr");
@@ -420,7 +516,7 @@ test("screenshots for the README (light, 2x, real sample)", { skip: !process.env
       await page.locator("#panel-header").getByRole("button", { name: "CRC", exact: true }).click();
       await page.evaluate(() => document.activeElement.blur());
       await settle(page);
-      await page.screenshot({ path: path.join(DOCS, "screenshots", "frame-details-1440.png"), fullPage: true });
+      await page.screenshot({ path: path.join(DOCS, "screenshots", "frame-details-1440.png") });
     }
     await page.close();
   }

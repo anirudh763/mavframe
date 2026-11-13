@@ -141,15 +141,19 @@ function render({ keepFocus = false } = {}) {
   const screen = route.screen === "details" && wide ? "frames" : route.screen;
   for (const [name, id] of Object.entries(SCREENS)) $(id).hidden = name !== screen;
 
-  document.title = `${TITLES[route.screen]} – Mavframe`;
-  const crumbs = ["Mavframe", ...(route.screen === "details" ? ["Frames", "Frame details"] : [TITLES[route.screen]])];
+  // On wide screens a selected row stays on the Frames screen (the analyzer), so title, H1 and
+  // breadcrumb say Frames; on narrow screens #/frames/<row> is its own Frame details screen.
+  const shown = route.screen === "details" && wide ? "frames" : route.screen;
+  document.title = `${TITLES[shown]} – Mavframe`;
+  document.body.classList.toggle("analyzer-mode", wide && screen === "frames");
+  const crumbs = ["Mavframe", ...(shown === "details" ? ["Frames", "Frame details"] : [TITLES[shown]])];
   $("crumbs").replaceChildren(...crumbs.map((c, i) => el("li", { "aria-current": i === crumbs.length - 1 ? "page" : null, text: c })));
   const nav = route.screen === "details" ? "frames" : route.screen;
   for (const a of document.querySelectorAll(".nav a[data-route]")) {
     if (a.dataset.route === nav) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   const back = $("back-link");
-  back.hidden = route.screen !== "details";
+  back.hidden = shown !== "details";
   back.href = buildHash("frames", route.params);
 
   if (screen === "capture") renderCapture();
@@ -359,9 +363,10 @@ function renderFrames(route) {
   $("frames-body").hidden = false;
   const p = route.params;
   const wide = WIDE.matches;
-  $("frames-lede").textContent = `${state.name}${state.isSample ? " (engineering fixture, not a real flight)" : ""}. Choose a row to inspect its header, payload, CRC and bytes.`;
   const c = (n, label) => el("span", {}, el("strong", { text: fmt(n) }), ` ${label}`);
-  $("frames-counts").replaceChildren(c(r.validFrames, "valid frames"), c(r.crcErrors, "CRC failures"), c(r.unsupported, "unsupported"),
+  $("frames-counts").replaceChildren(el("span", { class: "mono", text: state.name }),
+    ...(state.isSample ? [el("span", { class: "label warn", text: "Engineering fixture, not a real flight" })] : []),
+    c(r.validFrames, "valid frames"), c(r.crcErrors, "CRC failures"), c(r.unsupported, "unsupported"),
     c(r.gaps, "sequence gaps"), c(r.skippedBytes, "skipped bytes"));
   for (const b of document.querySelectorAll(".chip")) b.setAttribute("aria-pressed", String(b.dataset.check === p.check));
   $("msg-filter").value = p.msg === null ? "" : String(p.msg);
@@ -406,12 +411,12 @@ function renderList(rows, page, sel, p) {
       "data-pos": pos, onkeydown: onRowKey, onclick: () => { if (WIDE.matches) state.keepFocusNext = true; } }, msgLabel(info.msgid));
     const note = noteText(info);
     trs.push(el("tr", { class: isSel ? "selected" : null, "data-off": info.off, "data-pos": pos },
+      el("td", { class: "check" }, el("span", { class: `check-${info.check}`, text: CHECK_TEXT[info.check] })),
+      el("td", { class: "msg" }, link),
       el("td", { class: "num", text: relTime(info.ts) || "–" }),
       el("td", { class: "num mono", text: String(info.off) }),
-      el("td", { class: "msg" }, link),
       el("td", { text: `${info.sysid}:${info.compid}` }),
       el("td", { class: "num", text: String(info.seq) }),
-      el("td", {}, el("span", { class: `check-${info.check}`, text: CHECK_TEXT[info.check] })),
       el("td", { class: info.seqIssue ? "note-seq" : null, text: note })));
   }
   if (!trs.length) {
@@ -632,8 +637,8 @@ function renderDetail(route) {
     const verdict = a.crc.computed === null ? ["na", "Not checked: no CRC_EXTRA for this message id"]
       : a.crc.computed === a.crc.wire ? ["ok", "Match: valid CRC"] : ["bad", "Mismatch: CRC failed"];
     cc.replaceChildren(
-      el("div", {}, el("span", { class: "k", text: "Wire (in the capture)" }), el("span", { class: "v", text: hexN(a.crc.wire, 4) })),
-      el("div", {}, el("span", { class: "k", text: "Computed by mavframe_crc16()" }), el("span", { class: "v", text: computed })),
+      el("div", {}, el("span", { class: "k", text: "Wire CRC" }), el("span", { class: "v", text: hexN(a.crc.wire, 4) })),
+      el("div", {}, el("span", { class: "k", text: "Computed CRC" }), el("span", { class: "v", text: computed })),
       el("div", { class: `verdict ${verdict[0]}` }, el("span", { class: "k", text: "Result" }), el("span", { class: "v", text: verdict[1] })));
   } else {
     cc.replaceChildren(el("div", {}, el("span", { class: "k", text: "CRC" }), el("span", { class: "v", text: "cut off at the end of the capture" })));
@@ -657,11 +662,6 @@ function renderDetail(route) {
 
   // Under the H1 on the narrow details screen the groups are h2; under the detail h2 in the analyzer, h3.
   const hTag = wide ? "h3" : "h2";
-  const exportH = $("h-export");
-  if (exportH.tagName.toLowerCase() !== hTag) {
-    const n = el(hTag, { id: "h-export", class: "sub-h", text: exportH.textContent });
-    exportH.replaceWith(n);
-  }
   const groupTable = (g) => {
     const kids = [el(hTag, { text: g.title })];
     if (g.description) kids.push(el("p", { class: "muted small", text: g.description }));
@@ -671,7 +671,7 @@ function renderDetail(route) {
         el("thead", {}, el("tr", {}, ...["Field", "Value", "Reading", "Bytes"].map((h) => el("th", { scope: "col", text: h })))),
         el("tbody", {}, ...g.fields.map((f) => el("tr", { class: f.trimmed ? "trimmed" : null },
           el("td", {}, el("button", { type: "button", class: "fieldbtn", "data-key": f.key, "aria-pressed": "false", onclick: () => selectField(f.key, true) }, f.name)),
-          el("td", { class: "val", text: f.value + (f.units ? ` ${f.units}` : "") }),
+          el("td", { class: /^0x/.test(f.value) ? "val mono" : "val", text: f.value + (f.units ? ` ${f.units}` : "") }),
           el("td", { text: f.trimmed ? [f.reading, "not sent (trimmed zero bytes)"].filter(Boolean).join("; ") : f.reading }),
           el("td", { class: "bytes", text: byteRange(f.from - a.off, f.to - 1 - a.off) })))))));
     } else if (g.note) {
@@ -683,7 +683,6 @@ function renderDetail(route) {
   const tree = (ids) => el("div", { class: "tree" }, ...a.groups.filter((g) => ids.includes(g.id)).flatMap(groupTable));
   $("panel-header").replaceChildren(tree(["ts", "header", "crc", "sig"]));
   $("panel-decoded").replaceChildren(tree(["payload"]));
-  renderHex(a);
 
   // Tabs on narrow screens; all three panes at once on wide screens.
   const tab = route.params.tab;
@@ -702,6 +701,7 @@ function renderDetail(route) {
   if (wide) $("panel-header").parentElement.prepend($("panel-header"));
   else $("panel-header").parentElement.append($("panel-header"));
 
+  renderHex(a);
   const key = route.params.f && a.fields.some((f) => f.key === route.params.f) ? route.params.f : null;
   selectField(key, false);
   $("export-status").textContent = "";
@@ -719,7 +719,8 @@ function byteRange(from, last) {
   return from < 0 ? `${n(from)} to ${n(last)}` : `${n(from)}–${n(last)}`;
 }
 
-function renderHex(a) {
+// 16 bytes per row like a packet analyzer; 8 or 4 when a row (with the ASCII column) does not fit the pane.
+function renderHex(a, perRow = 16) {
   const bytes = state.bytes;
   const pre = $("hex");
   const start = a.start;
@@ -735,11 +736,11 @@ function renderHex(a) {
   }
   const segOf = (o) => segs.find((s) => o >= s.from && o < s.to);
   const frag = document.createDocumentFragment();
-  const base = start - (start % 16);
-  for (let row = base; row < end; row += 16) {
+  const base = start - (start % perRow);
+  for (let row = base; row < end; row += perRow) {
     frag.append(el("span", { class: "off", text: row.toString(16).padStart(8, "0") }), "  ");
     let ascii = "";
-    for (let o = row; o < row + 16; o++) {
+    for (let o = row; o < row + perRow; o++) {
       if (o >= start && o < end) {
         const s = segOf(o);
         // Screen readers get the region name where it starts; sighted users get the underline pattern.
@@ -750,12 +751,13 @@ function renderHex(a) {
         frag.append("  ");
         ascii += " ";
       }
-      frag.append(o === row + 7 ? "  " : " ");
+      frag.append(o === row + 7 && perRow === 16 ? "  " : " ");
     }
     frag.append(el("span", { class: "ascii", text: " " + ascii }), "\n");
   }
   pre.replaceChildren(frag);
   pre.setAttribute("aria-label", `Bytes ${fmt(start)} to ${fmt(end - 1)} in hexadecimal`);
+  if (perRow > 4 && pre.clientWidth && pre.scrollWidth > pre.clientWidth + 1) renderHex(a, perRow / 2);
 }
 
 // Linked selection: a field highlights its bytes; a byte selects its field.
@@ -948,6 +950,11 @@ function wire() {
   $("timeline").addEventListener("click", onTimelineClick);
   let t = 0;
   new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (state.result && !$("screen-frames").hidden) renderTimeline(state.route?.screen === "details" ? state.route.index : -1); }, 100); }).observe($("timeline"));
+  let th = 0;
+  new ResizeObserver(() => {
+    clearTimeout(th);
+    th = setTimeout(() => { if (state.anatomy && !$("detail-body").hidden) { renderHex(state.anatomy); selectField(state.route?.params.f || null, false); } }, 100);
+  }).observe($("hex"));
 
   for (const tname of TABS) {
     $(`tab-${tname}`).addEventListener("click", () => selectTab(tname, false));
