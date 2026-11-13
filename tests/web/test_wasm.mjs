@@ -13,13 +13,20 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { loadParser, analyze, decodePayload, detectFormat, frameAt, STATUS } from "../../docs/js/core.js";
+import { loadParser, analyze, decodePayload, detectFormat, frameAt, rawEvents, STATUS } from "../../docs/js/core.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const truth = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/web/sample-truth.json"), "utf8"));
 const sample = new Uint8Array(fs.readFileSync(path.join(ROOT, truth.file)));
 const parser = await loadParser(fs.readFileSync(path.join(ROOT, "docs/mavframe.wasm")));
 const DUMP = process.env.MAVFRAME_DUMP || path.join(ROOT, "build", "mavframe-dump");
+const GLUE = process.env.MAVFRAME_GLUE_DUMP || path.join(ROOT, "build", "glue_dump");
+const CASES = fs.mkdtempSync(path.join(os.tmpdir(), "mavframe-cases-"));
+{
+  const gen = spawnSync("python3", [path.join(ROOT, "tests/web/gen_cases.py"), CASES]);
+  assert.equal(gen.status, 0, gen.stderr.toString());
+}
+const readCase = (name) => new Uint8Array(fs.readFileSync(path.join(CASES, name)));
 
 function summary(r) {
   return {
@@ -51,6 +58,8 @@ test("sample flight: counts match the generator's ground truth", async () => {
   assert.equal(r.missingFrames, truth.missing_frames);
   assert.equal(r.skippedBytes, truth.skipped_bytes);
   assert.equal(r.rejects, 0);
+  assert.equal(r.unsupported, 0);
+  assert.equal(r.validFrames, truth.frames);
   assert.deepEqual(r.issues.filter((i) => i.kind === "crc").map((i) => i.off), truth.crc_error_offsets);
   assert.deepEqual(
     r.issues.filter((i) => i.kind === "gap").map((g) => ({ offset: g.off, sysid: g.sysid, compid: g.compid, missing: g.missing })),
@@ -175,4 +184,139 @@ test("hostile input: issue details are capped, counts stay exact", async () => {
   const tlog = await analyze(bytes, { parser, format: "tlog", yieldFn, maxIssues: 1000 });
   assert.equal(tlog.issues.length, 1000);
   assert.equal(tlog.crcErrors, tlog.stats.bad_crc);
+});
+
+// ---------- the WebAssembly module is the same C code as the native build ----------
+
+// Native build of the same glue + parser sources (build/glue_dump).
+function nativeEvents(bytes, args) {
+  assert.ok(fs.existsSync(GLUE), `native glue build missing at ${GLUE}: cmake --build build`);
+  const p = spawnSync(GLUE, args, { input: Buffer.from(bytes), maxBuffer: 1 << 28 });
+  assert.equal(p.status, 0, p.stderr.toString());
+  const lines = p.stdout.toString().trim().split("\n");
+  const st = lines.pop().split(" ").slice(1).map(Number);
+  return {
+    events: lines.filter(Boolean).map((l) => l.split(" ").map(Number)),
+    stats: { bytes: st[0], frames: st[1], bad_crc: st[2], unknown_msgid: st[3], bad_flags: st[4], dropped_bytes: st[5] },
+  };
+}
+
+function chunks(len, size) {
+  const r = [];
+  for (let p = 0; p < len; p += size) r.push(Math.min(size, len - p));
+  return r;
+}
+
+test("the wasm module is compiled from src/mavframe.c itself (no copy) and is up to date", () => {
+  const script = fs.readFileSync(path.join(ROOT, "tools/build_wasm.sh"), "utf8");
+  assert.match(script, /src\/mavframe\.c web\/wasm\/mavframe_wasm\.c/);
+  const files = spawnSync("git", ["ls-files", "*.c", "*.h"], { cwd: ROOT }).stdout.toString().trim().split("\n");
+  assert.deepEqual(files.filter((f) => path.basename(f) === "mavframe.c"), ["src/mavframe.c"]);
+  const zig = spawnSync("python3", ["-c", "import ziglang"]);
+  if (zig.status !== 0) {
+    console.log("# ziglang not installed: rebuild comparison skipped here (CI runs it)");
+    return;
+  }
+  const out = path.join(CASES, "rebuilt.wasm");
+  const b = spawnSync("sh", [path.join(ROOT, "tools/build_wasm.sh"), out]);
+  assert.equal(b.status, 0, b.stderr.toString());
+  assert.ok(fs.readFileSync(out).equals(fs.readFileSync(path.join(ROOT, "docs/mavframe.wasm"))),
+    "docs/mavframe.wasm differs from a fresh build of src/mavframe.c");
+});
+
+test("native and wasm builds give identical events: malformed, signed and chunked input", () => {
+  const corruptPath = path.join(CASES, "corrupt.bin");
+  assert.equal(spawnSync("python3", [path.join(ROOT, "bench/gen_stream.py"), "corrupt", "3000", corruptPath]).status, 0);
+  const streams = {
+    sample, corrupt: new Uint8Array(fs.readFileSync(corruptPath)),
+    signed: readCase("signed.bin"), malformed: readCase("malformed.bin"), boundary: readCase("boundary.bin"),
+  };
+  let compared = 0;
+  for (const [name, bytes] of Object.entries(streams)) {
+    for (const size of [bytes.length, 1, 2, 3, 7, 10, 13, 255, 4096]) {
+      const w = rawEvents(parser, bytes, chunks(bytes.length, size));
+      const n = nativeEvents(bytes, [`c${size}`]);
+      assert.deepEqual(w, n, `${name}, reads of ${size} bytes`);
+      compared += w.events.length;
+    }
+  }
+  console.log(`# native vs wasm: ${compared} events compared`);
+  // Each case really occurs.
+  const ev = rawEvents(parser, streams.malformed, [streams.malformed.length]).events;
+  for (const st of [STATUS.FRAME, STATUS.BAD_CRC, STATUS.UNKNOWN_MSGID, STATUS.BAD_FLAGS]) {
+    assert.ok(ev.some((e) => e[2] === st), `status ${st} in malformed.bin`);
+  }
+  const signedFrames = rawEvents(parser, streams.signed, [streams.signed.length]).events.filter((e) => e[2] === STATUS.FRAME);
+  assert.ok(signedFrames.length >= 20 && signedFrames.every((e) => e[7] & 1), "signed frames reported with the signed flag");
+});
+
+test("native and wasm agree when the stream is split into two reads at every byte boundary", () => {
+  for (const name of ["boundary.bin", "malformed.bin"]) {
+    const bytes = readCase(name);
+    const ref = rawEvents(parser, bytes, [bytes.length]);
+    assert.deepEqual(nativeEvents(bytes, []), ref, `${name} whole`);
+    for (let k = 1; k < bytes.length; k++) {
+      const reads = [k, bytes.length - k];
+      const w = rawEvents(parser, bytes, reads);
+      assert.deepEqual(w, ref, `${name}: wasm, split at ${k}`);
+      assert.deepEqual(nativeEvents(bytes, [String(k)]), ref, `${name}: native, split at ${k}`);
+    }
+    console.log(`# ${name}: ${bytes.length - 1} split points, ${ref.events.length} events each`);
+  }
+});
+
+test("unknown message ids are counted as unsupported, not as corrupt", async () => {
+  const r = await analyze(readCase("malformed.bin"), { parser, format: "raw" });
+  assert.ok(r.unsupported >= 1);
+  assert.ok(r.crcErrors >= 1);
+  assert.ok(r.rejects >= 1);
+  assert.equal(r.unsupported, r.stats.unknown_msgid);
+  assert.equal(r.crcErrors, r.stats.bad_crc);
+  assert.equal(r.rejects, r.stats.bad_flags);
+  assert.ok(r.issues.filter((i) => i.kind === "unsupported").every((i) => i.status === STATUS.UNKNOWN_MSGID));
+});
+
+test("analysis can be cancelled between chunks and frame details are capped", async () => {
+  const ctl = new AbortController();
+  let chunksSeen = 0;
+  await assert.rejects(
+    analyze(sample, { parser, name: "x.tlog", chunkSize: 1000, yieldFn: async () => {}, signal: ctl.signal,
+      onProgress: () => { if (++chunksSeen === 3) ctl.abort(); } }),
+    { name: "AbortError" });
+  assert.equal(chunksSeen, 3);
+  const capped = await analyze(sample, { parser, name: "x.tlog", maxFrames: 100 });
+  assert.equal(capped.frameCount, 100);
+  assert.equal(capped.validFrames, truth.frames);
+  assert.equal(capped.crcErrors, truth.crc_errors);
+  assert.equal(capped.gaps, truth.gaps);
+  assert.equal(capped.endTs, truth.last_ts_us);
+});
+
+// ---------- sequence numbers: gaps, duplicates, out-of-order, wraparound ----------
+const SEQ_EXPECT = {
+  // name: [seqs, gaps, ~missing, duplicates, reorders]
+  "in-order": [[10, 11], 0, 0, 0, 0],
+  duplicate: [[10, 10, 11], 0, 0, 1, 0],
+  backwards: [[10, 9, 11], 0, 0, 0, 1],
+  wrap: [[255, 0], 0, 0, 0, 0],
+  gap: [[10, 13], 1, 2, 0, 0],
+  reset: [[200, 150, 151], 0, 0, 0, 1],
+};
+
+test("sequence numbers: duplicates and backward steps are not gaps; 255 -> 0 is in order", async () => {
+  for (const [name, [seqs, gaps, missing, dups, reorders]] of Object.entries(SEQ_EXPECT)) {
+    const bytes = readCase(`seq-${name}.bin`);
+    // Wasm and native builds see the same frames with these sequence numbers.
+    const w = rawEvents(parser, bytes, [bytes.length]);
+    assert.deepEqual(w, nativeEvents(bytes, []), `${name}: native vs wasm`);
+    assert.deepEqual(w.events.map((e) => e[3]), seqs, `${name}: seq values`);
+    assert.ok(w.events.every((e) => e[2] === STATUS.FRAME), `${name}: all frames valid`);
+    const r = await analyze(bytes, { parser, format: "raw" });
+    assert.deepEqual([r.gaps, r.missingFrames, r.duplicates, r.reorders, r.crcErrors],
+      [gaps, missing, dups, reorders, 0], `${name}: [gaps, ~missing, duplicates, reorders, crc]`);
+  }
+  const reset = await analyze(readCase("seq-reset.bin"), { parser, format: "raw" });
+  assert.equal(reset.issues[0].reset, true);
+  const late = await analyze(readCase("seq-backwards.bin"), { parser, format: "raw" });
+  assert.deepEqual([late.issues[0].kind, late.issues[0].back, late.issues[0].reset], ["reorder", 1, false]);
 });

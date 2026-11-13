@@ -1012,6 +1012,7 @@
    "offset": 65936
   }
  ],
+ "duplicates": 0,
  "file": "docs/sample/sample-flight.tlog",
  "first_ts_us": 1767225600000121,
  "frames": 1496,
@@ -1086,6 +1087,7 @@
   "valid_v2_frames": 1496
  },
  "records": 1500,
+ "reorders": 0,
  "skipped_bytes": 160,
  "v1_records": 1
 }

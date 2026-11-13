@@ -6,7 +6,11 @@
 import { MESSAGE_NAMES, MESSAGES, ENUMS } from "./msgdefs.js";
 
 export const STATUS = { FRAME: 1, BAD_CRC: 2, UNKNOWN_MSGID: 3, BAD_FLAGS: 4 };
-export const MAX_CAPTURE_BYTES = 512 * 1024 * 1024;
+// Memory bounds. A capture is held in memory once; frame details take 23
+// bytes each and are kept for the first MAX_LISTED_FRAMES frames, issue
+// details for the first MAX_LISTED_ISSUES issues. Counts always cover all.
+export const MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
+export const MAX_LISTED_FRAMES = 4000000;
 export const MAX_LISTED_ISSUES = 100000;
 const EVENT_SIZE = 16;
 const TS_MIN_US = 946684800e6; // 2000-01-01
@@ -88,8 +92,39 @@ class Growable {
   }
 }
 
+export function abortError() {
+  const e = new Error("cancelled");
+  e.name = "AbortError";
+  return e;
+}
+
 function defaultYield() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/*
+ * Sequence numbers are 8 bits and wrap (255 -> 0 is in order). For one
+ * (system, component) the step d = (seq - prev) mod 256 is read as:
+ *   d = 1          in order
+ *   d = 0          duplicate (same seq again)
+ *   d = 2..128     gap: about d-1 frames missing *if* frames arrive in
+ *                  order; a late or reordered frame looks the same, so the
+ *                  number is an estimate, not a count of lost frames
+ *   d = 129..255   a step back by 256-d: a late (out-of-order) frame when
+ *                  the step is small (<= 16; the expected position is kept),
+ *                  otherwise more likely a sender restart/reset (tracking
+ *                  continues from the new value)
+ * Returns { kind: "next"|"duplicate"|"gap"|"reorder", next: seq to compare
+ * the following frame with, missing?, back?, reset? }.
+ */
+export const SEQ_LATE_MAX_BACK = 16;
+export function classifySeq(prev, seq) {
+  const d = (seq - prev) & 0xff;
+  if (d === 1) return { kind: "next", next: seq };
+  if (d === 0) return { kind: "duplicate", next: prev };
+  if (d <= 128) return { kind: "gap", next: seq, missing: d - 1 };
+  const back = 256 - d;
+  return back <= SEQ_LATE_MAX_BACK ? { kind: "reorder", next: prev, back, reset: false } : { kind: "reorder", next: seq, back, reset: true };
 }
 
 /*
@@ -101,6 +136,14 @@ function defaultYield() {
  * bytes right before a valid frame is a timestamp byte that happened to be
  * 0xFD, not a link error; such events are counted as timestampArtifacts
  * instead of CRC errors / rejects.
+ *
+ * Issue kinds: "crc" (checksum mismatch: corrupted), "unsupported" (message
+ * id without CRC_EXTRA in the common dialect: another dialect or noise; the
+ * checksum cannot be checked, so it is not called corrupt), "reject"
+ * (incompat flags other than "signed"), and three sequence-number findings
+ * per (system, component), see classifySeq(): "gap", "duplicate", "reorder".
+ *
+ * opts.signal (an AbortSignal) cancels between chunks with an AbortError.
  */
 export async function analyze(bytes, opts = {}) {
   const parser = opts.parser;
@@ -109,7 +152,9 @@ export async function analyze(bytes, opts = {}) {
   const chunk = Math.min(opts.chunkSize || 512 * 1024, parser.inputCap);
   const onProgress = opts.onProgress || (() => {});
   const yieldFn = opts.yieldFn || defaultYield;
-  if (bytes.length > MAX_CAPTURE_BYTES) throw new Error("capture larger than 512 MB");
+  if (bytes.length > MAX_CAPTURE_BYTES) throw new Error(`capture larger than ${MAX_CAPTURE_BYTES / 1048576} MB`);
+  const maxFrames = opts.maxFrames ?? MAX_LISTED_FRAMES;
+  let validFrames = 0;
 
   const off = new Growable(Uint32Array);
   const msgid = new Growable(Uint32Array);
@@ -123,8 +168,8 @@ export async function analyze(bytes, opts = {}) {
   // header every 10 bytes) would create millions of objects and exhaust the
   // tab's memory.
   const maxIssues = opts.maxIssues ?? MAX_LISTED_ISSUES;
-  const issues = []; // {kind:"crc"|"reject"|"gap", off, msgid, sysid, compid, seq, ts, frame, ...}
-  const counts = { crc: 0, reject: 0, gap: 0 };
+  const issues = []; // {kind, off, msgid, sysid, compid, seq, ts, frame, ...}
+  const counts = { crc: 0, unsupported: 0, reject: 0, gap: 0, duplicate: 0, reorder: 0 };
   let missingFrames = 0;
   let unlisted = 0;
   const pending = []; // .tlog: rejections that may still turn out to be timestamp bytes
@@ -149,11 +194,11 @@ export async function analyze(bytes, opts = {}) {
     return plausibleTs(t) ? t : NaN;
   }
 
-  function commit(it) {
+  function commit(it, listable = true) {
     counts[it.kind]++;
     if (it.kind === "crc") msgEntry(it.msgid).crcErrors++;
     if (it.kind === "gap") missingFrames += it.missing;
-    if (issues.length < maxIssues) issues.push(it);
+    if (listable && issues.length < maxIssues) issues.push(it);
     else unlisted++;
   }
 
@@ -168,7 +213,8 @@ export async function analyze(bytes, opts = {}) {
       };
       if (e.status !== STATUS.FRAME) {
         const own = tsBefore(e.off);
-        const it = { kind: e.status === STATUS.BAD_CRC ? "crc" : "reject", status: e.status, off: e.off,
+        const kind = e.status === STATUS.BAD_CRC ? "crc" : e.status === STATUS.UNKNOWN_MSGID ? "unsupported" : "reject";
+        const it = { kind, status: e.status, off: e.off,
           msgid: e.msgid, sysid: e.sysid, compid: e.compid, seq: e.seq, len: e.len, flen: e.flen, iflags: e.iflags,
           ts: Number.isNaN(own) ? lastTs : own, frame: n };
         if (!tlog) { commit(it); continue; }
@@ -189,16 +235,20 @@ export async function analyze(bytes, opts = {}) {
       if (!Number.isNaN(t)) { framesWithTs++; lastTs = t; }
       const key = (e.sysid << 8) | e.compid;
       const prev = lastSeq[key];
-      if (prev >= 0 && e.seq !== ((prev + 1) & 0xff)) {
-        commit({ kind: "gap", off: e.off, msgid: e.msgid, sysid: e.sysid, compid: e.compid, seq: e.seq,
-          prevSeq: prev, missing: (e.seq - prev - 1) & 0xff, ts: t, frame: n });
+      const c = prev >= 0 ? classifySeq(prev, e.seq) : { kind: "first", next: e.seq };
+      if (c.kind !== "next" && c.kind !== "first") {
+        commit({ kind: c.kind, off: e.off, msgid: e.msgid, sysid: e.sysid, compid: e.compid, seq: e.seq,
+          prevSeq: prev, missing: c.missing || 0, back: c.back || 0, reset: !!c.reset, ts: t, frame: n }, n < maxFrames);
       }
-      lastSeq[key] = e.seq;
+      lastSeq[key] = c.next;
 
-      off.ensure(n + 1); msgid.ensure(n + 1); ts.ensure(n + 1); flen.ensure(n + 1); hdr.ensure(5 * n + 5);
-      off.a[n] = e.off; msgid.a[n] = e.msgid; ts.a[n] = t; flen.a[n] = e.flen;
-      hdr.a.set([e.seq, e.sysid, e.compid, e.len, e.iflags], 5 * n);
-      n++;
+      validFrames++;
+      if (n < maxFrames) {
+        off.ensure(n + 1); msgid.ensure(n + 1); ts.ensure(n + 1); flen.ensure(n + 1); hdr.ensure(5 * n + 5);
+        off.a[n] = e.off; msgid.a[n] = e.msgid; ts.a[n] = t; flen.a[n] = e.flen;
+        hdr.a.set([e.seq, e.sysid, e.compid, e.len, e.iflags], 5 * n);
+        n++;
+      }
       const m = msgEntry(e.msgid);
       m.count++;
       m.sources.add(key);
@@ -224,6 +274,7 @@ export async function analyze(bytes, opts = {}) {
     }
     onProgress(pos + len, bytes.length);
     if (pos + len < bytes.length) await yieldFn();
+    if (opts.signal?.aborted) throw abortError();
   }
   for (;;) {
     const done = x.mfw_flush();
@@ -237,7 +288,7 @@ export async function analyze(bytes, opts = {}) {
   let firstTs = NaN;
   let endTs = NaN;
   for (let i = 0; i < n; i++) if (!Number.isNaN(ts.a[i])) { firstTs = ts.a[i]; break; }
-  for (let i = n - 1; i >= 0; i--) if (!Number.isNaN(ts.a[i])) { endTs = ts.a[i]; break; }
+  endTs = lastTs;
   const msgList = [...messages.values()].sort((a, b) => a.msgid - b.msgid);
   for (const m of msgList) {
     const span = (m.lastTs - m.firstTs) / 1e6;
@@ -248,7 +299,9 @@ export async function analyze(bytes, opts = {}) {
     format,
     bytes,
     byteLength: bytes.length,
-    frameCount: n,
+    frameCount: n, // frames with details kept (the first maxFrames)
+    validFrames, // all frames with a valid CRC
+    unlistedFrames: validFrames - n,
     frames: {
       off: off.a.subarray(0, n), msgid: msgid.a.subarray(0, n), ts: ts.a.subarray(0, n),
       flen: flen.a.subarray(0, n), hdr: hdr.a.subarray(0, 5 * n),
@@ -257,15 +310,52 @@ export async function analyze(bytes, opts = {}) {
     unlistedIssues: unlisted,
     messages: msgList,
     crcErrors: counts.crc,
+    unsupported: counts.unsupported,
     rejects: counts.reject,
     gaps: counts.gap,
-    missingFrames,
+    missingFrames, // estimate: assumes frames of one component arrive in order
+    duplicates: counts.duplicate,
+    reorders: counts.reorder,
     timestampArtifacts,
     skippedBytes: stats.dropped_bytes - (tlog ? 8 * framesWithTs : 0),
     firstTs,
     endTs,
     stats,
   };
+}
+
+// Low-level: feed bytes to the wasm glue in the given read sizes (each at
+// most inputCap) and return every recorded event plus the parser counters.
+// Used by the tests to compare the wasm and native builds event by event.
+export function rawEvents(parser, bytes, reads) {
+  const x = parser.exports;
+  const out = [];
+  const take = () => {
+    const v = parser.events(x.mfw_event_count());
+    for (let i = 0; i < x.mfw_event_count(); i++) {
+      const b = i * EVENT_SIZE;
+      out.push([v.getUint32(b, true), v.getUint32(b + 4, true), v.getUint8(b + 8), v.getUint8(b + 9), v.getUint8(b + 10),
+        v.getUint8(b + 11), v.getUint8(b + 12), v.getUint8(b + 13), v.getUint16(b + 14, true)]);
+    }
+  };
+  x.mfw_reset();
+  let pos = 0;
+  for (const r of reads) {
+    if (r > parser.inputCap) throw new Error("read larger than the input buffer");
+    parser.input().set(bytes.subarray(pos, pos + r), 0);
+    let used = 0;
+    while (used < r) {
+      used += x.mfw_feed(used, r - used);
+      take();
+    }
+    pos += r;
+  }
+  for (;;) {
+    const done = x.mfw_flush();
+    take();
+    if (done) break;
+  }
+  return { events: out, stats: parser.stats() };
 }
 
 // One frame of a result as an object.

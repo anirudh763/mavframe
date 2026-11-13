@@ -1,7 +1,7 @@
 // UI for the mavframe inspector. Analysis lives in core.js; this file only
 // renders. Everything taken from a capture is inserted with textContent.
 import {
-  loadParser, analyze, frameAt, decodePayload, formatValue, messageName, STATUS, MAX_CAPTURE_BYTES,
+  loadParser, analyze, frameAt, decodePayload, formatValue, messageName, MAX_CAPTURE_BYTES,
 } from "./core.js";
 
 const SAMPLE = { url: "sample/sample-flight.tlog", name: "sample-flight.tlog" };
@@ -61,6 +61,7 @@ const timeMode = () => state.result && !Number.isNaN(state.result.firstTs) && st
 function setBusy(busy) {
   state.busy = busy;
   for (const id of ["load-sample", "file", "format"]) $(id).disabled = busy;
+  $("cancel").hidden = !busy;
 }
 
 async function run(bytes, name, isSample) {
@@ -72,10 +73,12 @@ async function run(bytes, name, isSample) {
   progress.value = 0;
   const mb = (n) => (n / 1048576).toFixed(1);
   setStatus(`Parsing ${name} (${fmt(bytes.length)} bytes)…`);
+  state.abort = new AbortController();
   try {
     const fmtChoice = $("format").value;
     const result = await analyze(bytes, {
       parser: state.parser, name, format: fmtChoice === "auto" ? undefined : fmtChoice, yieldFn: yieldToBrowser,
+      signal: state.abort.signal,
       onProgress(done, total) {
         progress.value = total ? Math.round((100 * done) / total) : 100;
         ptext.textContent = `${mb(done)} of ${mb(total)} MB`;
@@ -95,10 +98,21 @@ async function run(bytes, name, isSample) {
     renderList();
     renderTimeline();
     renderDetail();
-    setStatus(`${name}: ${fmt(result.frameCount)} valid frames, ${fmt(result.crcErrors)} CRC errors, ` +
-      `${fmt(result.gaps)} sequence gaps, ${fmt(result.skippedBytes)} skipped bytes.`);
+    if (result.validFrames === 0) {
+      setStatus(`No MAVLink v2 frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
+        (result.unsupported ? `, ${fmt(result.unsupported)} candidates with message ids outside the common dialect` : "") +
+        ". Open a .tlog or raw MAVLink v2 capture (v1-only streams are not supported).", true);
+    } else {
+      setStatus(`${name}: ${fmt(result.validFrames)} valid frames, ${fmt(result.crcErrors)} CRC errors, ` +
+        `${fmt(result.unsupported)} unsupported, ${fmt(result.gaps)} sequence gaps (~${fmt(result.missingFrames)} frames missing if in order), ` +
+        `${fmt(result.skippedBytes)} skipped bytes.`);
+    }
   } catch (err) {
-    setStatus(`Could not parse ${name}: ${err.message}`, true);
+    if (err.name === "AbortError") {
+      setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ""));
+    } else {
+      setStatus(`Could not parse ${name}: ${err.message}`, true);
+    }
   } finally {
     progress.hidden = ptext.hidden = true;
     setBusy(false);
@@ -117,12 +131,24 @@ async function loadSample() {
 
 async function openFile(file) {
   if (!file) return;
+  if (file.size === 0) {
+    setStatus(`${file.name} is empty (0 bytes). Nothing was loaded; choose a .tlog or raw MAVLink v2 capture.`, true);
+    return;
+  }
   if (file.size > MAX_CAPTURE_BYTES) {
-    setStatus(`${file.name} is ${fmt(file.size)} bytes. The inspector reads files up to 512 MB; split the capture first.`, true);
+    setStatus(`${file.name} is ${(file.size / 1048576).toFixed(0)} MB. The inspector reads captures up to ` +
+      `${MAX_CAPTURE_BYTES / 1048576} MB in the browser to stay within memory; split the file (for example with split -b 200m) ` +
+      "or use the mavframe-dump command-line tool.", true);
     return;
   }
   setStatus(`Reading ${file.name}…`);
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (err) {
+    setStatus(`Could not read ${file.name}: ${err.message}`, true);
+    return;
+  }
   await run(bytes, file.name, false);
 }
 
@@ -141,11 +167,13 @@ function renderSummary() {
     dd.className = cls || "";
     dd.replaceChildren(main, ...(sub ? [el("span", { class: "sub", text: sub })] : []));
   };
-  set("m-frames", fmt(r.frameCount), `${fmt(r.messages.length)} message types`);
+  set("m-frames", fmt(r.validFrames), `${fmt(r.messages.length)} message types`);
   set("m-crc", fmt(r.crcErrors), null, r.crcErrors ? "bad" : "");
-  set("m-gaps", fmt(r.gaps), `${fmt(r.missingFrames)} frames missing`, r.gaps ? "warn" : "");
+  set("m-gaps", fmt(r.gaps), `~${fmt(r.missingFrames)} frames missing if packets arrived in order; ` +
+    `${fmt(r.duplicates)} duplicate, ${fmt(r.reorders)} out of order`, r.gaps ? "warn" : "");
   set("m-skipped", fmt(r.skippedBytes), `of ${fmt(r.byteLength)} bytes`);
-  set("m-rejects", fmt(r.rejects), r.timestampArtifacts ? `plus ${fmt(r.timestampArtifacts)} 0xFD bytes inside timestamps` : "unknown id or bad flags");
+  set("m-unsupported", fmt(r.unsupported), "unknown message id: not checked, not counted as corrupt");
+  set("m-rejects", fmt(r.rejects), r.timestampArtifacts ? `incompat flags; ${fmt(r.timestampArtifacts)} 0xFD bytes inside timestamps ignored` : "unsupported incompat flags");
   set("m-duration", timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} s` : "n/a",
     timeMode() ? new Date(r.firstTs / 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "no timestamps in raw streams");
 }
@@ -233,8 +261,8 @@ function renderTimeline() {
   }
   svg.replaceChildren(...kids);
   const span = timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} seconds` : `${fmt(r.byteLength)} bytes`;
-  $("timeline-desc").textContent = `Timeline over ${span}: ${fmt(r.frameCount)} valid frames, ${fmt(r.crcErrors)} CRC errors, ` +
-    `${fmt(r.gaps)} sequence gaps. Use Previous issue and Next issue to step through them.`;
+  $("timeline-desc").textContent = `Timeline over ${span}: ${fmt(r.validFrames)} valid frames, ${fmt(r.crcErrors)} CRC errors, ${fmt(r.unsupported)} unsupported message ids, ` +
+    `${fmt(r.gaps)} sequence gaps, ${fmt(r.duplicates + r.reorders)} duplicate or out-of-order sequence numbers. Use Previous issue and Next issue to step through them.`;
   $("axis-start").textContent = timeMode() ? "0 s" : "0";
   $("axis-unit").textContent = timeMode() ? "time since first frame" : "byte offset (raw streams have no timestamps)";
   $("axis-end").textContent = timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} s` : fmt(r.byteLength);
@@ -302,12 +330,16 @@ function listRows() {
   return out;
 }
 
-const ISSUE_TEXT = { crc: "CRC error", gap: "Sequence gap", reject: "Rejected" };
+const ISSUE_TEXT = { crc: "CRC error", gap: "Sequence gap", duplicate: "Duplicate seq", reorder: "Out of order",
+  unsupported: "Unsupported id", reject: "Bad flags" };
+const SEQ_KINDS = new Set(["gap", "duplicate", "reorder"]);
 
 function issueDetail(it) {
-  if (it.kind === "gap") return `seq ${it.prevSeq} to ${it.seq}, ${it.missing} missing`;
+  if (it.kind === "gap") return `seq ${it.prevSeq} to ${it.seq}, ~${it.missing} missing if in order`;
+  if (it.kind === "duplicate") return `seq ${it.seq} repeated`;
+  if (it.kind === "reorder") return `seq ${it.seq} after ${it.prevSeq}: ${it.reset ? "likely sender restart" : "late frame"}`;
   if (it.kind === "crc") return `${it.flen} bytes, checksum does not match`;
-  return it.status === STATUS.UNKNOWN_MSGID ? `message id ${it.msgid} not in the common dialect` : `incompat flags ${hexN(it.iflags, 2)}`;
+  return it.kind === "unsupported" ? `message id ${it.msgid} not in the common dialect; not checked` : `incompat flags ${hexN(it.iflags, 2)}`;
 }
 
 function renderList() {
@@ -325,7 +357,7 @@ function renderList() {
     el("th", { scope: "col", class: [numeric.has(hd) ? "num" : "", hd === "Time (s)" ? "col-time" : ""].join(" ").trim() || null, text: hd })));
 
   const gapAt = new Map();
-  if (state.view === "frames") for (const it of r.issues) if (it.kind === "gap") gapAt.set(it.frame, it);
+  if (state.view === "frames") for (const it of r.issues) if (SEQ_KINDS.has(it.kind)) gapAt.set(it.frame, it);
   const trs = [];
   for (const idx of rows.slice(state.page * PAGE, state.page * PAGE + PAGE)) {
     const isSel = state.sel && state.sel.t === (state.view === "frames" ? "f" : "i") && state.sel.i === idx;
@@ -344,7 +376,7 @@ function renderList() {
         el("td", { class: "mono", text: `${f.sysid}:${f.compid}` }),
         el("td", { class: "num", text: f.seq }),
         el("td", { class: "num", text: f.flen }),
-        el("td", { class: gap ? "note-gap" : null, text: gap ? `after gap: ${gap.missing} missing` : (f.iflags & 1 ? "signed" : "") }),
+        el("td", { class: gap ? "note-gap" : null, text: gap ? `${ISSUE_TEXT[gap.kind]}: ${issueDetail(gap)}` : (f.iflags & 1 ? "signature present; not verified" : "") }),
       ];
     } else {
       const it = r.issues[idx];
@@ -367,6 +399,7 @@ function renderList() {
   const from = rows.length ? state.page * PAGE + 1 : 0;
   const to = Math.min(rows.length, (state.page + 1) * PAGE);
   $("page-info").textContent = `${fmt(from)}–${fmt(to)} of ${fmt(rows.length)} ${state.view === "frames" ? "frames" : "issues"}` +
+    (state.view === "frames" && r.unlistedFrames && state.msg === null ? ` (only the first ${fmt(r.frameCount)} of ${fmt(r.validFrames)} frames are listed; the counts above include all)` : "") +
     (state.view === "issues" && r.unlistedIssues ? ` (only the first ${fmt(r.issues.length)} of ${fmt(r.issues.length + r.unlistedIssues)} issues are listed; the counts above include all)` : "");
   $("prev-page").disabled = state.page === 0;
   $("next-page").disabled = state.page >= pages - 1;
@@ -483,7 +516,7 @@ function headerRows(off, flen) {
     rows.push(["tlog timestamp", `${us} µs (${iso})`, "-8 to -1"]);
   }
   rows.push(["Start byte", hexN(b[off], 2), "0"], ["Payload length", String(plen), "1"],
-    ["Incompat flags", `${hexN(b[off + 2], 2)}${signed ? " (signed)" : ""}`, "2"], ["Compat flags", hexN(b[off + 3], 2), "3"],
+    ["Incompat flags", `${hexN(b[off + 2], 2)}${signed ? " (signature present; not verified)" : ""}`, "2"], ["Compat flags", hexN(b[off + 3], 2), "3"],
     ["Sequence", String(b[off + 4]), "4"], ["System ID", String(b[off + 5]), "5"], ["Component ID", String(b[off + 6]), "6"],
     ["Message ID", `${msgid} (${msgLabel(msgid)})`, "7 to 9"]);
   let crcInfo = null;
@@ -493,7 +526,7 @@ function headerRows(off, flen) {
     const computed = state.parser.crc(b.subarray(off, off + c + 2));
     crcInfo = { received, computed };
     rows.push(["CRC", `${hexN(received, 4)} received, ${computed === null ? "cannot be computed" : hexN(computed, 4) + " computed"}`, `${c} to ${c + 1}`]);
-    if (signed) rows.push(["Signature", "13 bytes, carried but not verified", `${c + 2} to ${c + 14}`]);
+    if (signed) rows.push(["Signature", "signature present; not verified (13 bytes: link id, timestamp, hash)", `${c + 2} to ${c + 14}`]);
   }
   return { rows, crcInfo, plen, msgid };
 }
@@ -525,10 +558,10 @@ function renderDetail() {
   let frame = null;
   if (state.sel.t === "i") {
     issue = r.issues[state.sel.i];
-    if (issue.kind === "gap") frame = frameAt(r, issue.frame);
+    if (SEQ_KINDS.has(issue.kind)) frame = frameAt(r, issue.frame);
   } else {
     frame = frameAt(r, state.sel.i);
-    issue = r.issues.find((it) => it.kind === "gap" && it.frame === state.sel.i) || null;
+    issue = r.issues.find((it) => SEQ_KINDS.has(it.kind) && it.frame === state.sel.i) || null;
   }
   if (frame) {
     off = frame.off;
@@ -536,18 +569,30 @@ function renderDetail() {
     kids.push(el("p", { class: "lead" }, el("strong", { text: msgLabel(frame.msgid) }),
       ` (id ${frame.msgid}), frame ${fmt(frame.index + 1)}: ${flen} bytes at offset ${fmt(off)}` +
       (relTime(frame.ts) ? `, t = ${relTime(frame.ts)} s` : "")));
-    if (issue && issue.kind === "gap") {
-      kids.push(el("p", { class: "note warn" }, el("span", { class: "kind gap", text: "Sequence gap. " }),
-        `System ${issue.sysid} component ${issue.compid} jumped from seq ${issue.prevSeq} to ${issue.seq}: ` +
-        `${issue.missing} frame${issue.missing === 1 ? " was" : "s were"} lost or failed the CRC check before this one.`));
+    if (frame.iflags & 1) {
+      kids.push(el("p", { class: "note", text: "Signed frame: signature present; not verified. This inspector, like the parser, carries the 13 signature bytes without checking them (that needs the link's secret key)." }));
+    }
+    if (issue && SEQ_KINDS.has(issue.kind)) {
+      const who = `System ${issue.sysid} component ${issue.compid}`;
+      const text = issue.kind === "gap"
+        ? `${who} went from seq ${issue.prevSeq} to ${issue.seq}. If its frames arrived in order, about ${issue.missing} ` +
+          `frame${issue.missing === 1 ? " is" : "s are"} missing before this one. This is an estimate from sequence numbers ` +
+          "(a late frame looks the same), not a CRC error; CRC errors are counted separately."
+        : issue.kind === "duplicate"
+          ? `${who} sent seq ${issue.seq} twice in a row (a duplicate or retransmitted frame). Not counted as missing.`
+          : `${who} went back from seq ${issue.prevSeq} to ${issue.seq} (${issue.back} back). ` +
+            (issue.reset ? "A step this large more likely means the sender restarted; counting continues from here."
+              : "Most likely a late frame delivered out of order. Not counted as missing.");
+      kids.push(el("p", { class: "note warn" }, el("span", { class: `kind ${issue.kind}`, text: `${ISSUE_TEXT[issue.kind]}. ` }), text));
     }
   } else {
     off = issue.off;
     flen = Math.min(issue.flen, r.byteLength - off);
     const what = issue.kind === "crc"
       ? "The header looked valid but the checksum over header and payload does not match, so the frame was discarded."
-      : issue.status === STATUS.UNKNOWN_MSGID
-        ? `Message id ${issue.msgid} has no CRC_EXTRA in the common dialect, so its checksum cannot be checked and the candidate was discarded.`
+      : issue.kind === "unsupported"
+        ? `Message id ${issue.msgid} is not in the common dialect (it may come from another dialect, such as ardupilotmega, or be noise). ` +
+          "Without its CRC_EXTRA the checksum cannot be checked, so the frame is skipped as unsupported, not counted as corrupt."
         : `Incompat flags ${hexN(issue.iflags, 2)} include bits other than "signed", which this parser does not support.`;
     kids.push(el("p", { class: "lead" }, el("span", { class: `kind ${issue.kind}`, text: ISSUE_TEXT[issue.kind] }),
       ` at offset ${fmt(off)}` + (relTime(issue.ts) ? `, t = ${relTime(issue.ts)} s` : "")));
@@ -616,6 +661,7 @@ function applyHash(hash) {
 // ---------- wiring ----------
 function wire() {
   $("load-sample").addEventListener("click", () => { state.pendingHash = null; loadSample(); });
+  $("cancel").addEventListener("click", () => state.abort?.abort());
   $("file").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
   $("format").addEventListener("change", () => { if (state.bytes) run(state.bytes, state.name, state.isSample); });
   $("view-frames").addEventListener("click", () => setView("frames"));

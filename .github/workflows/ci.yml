@@ -45,6 +45,11 @@ jobs:
         run: ctest --test-dir build-asan --output-on-failure
       - name: Differential tests with the sanitized dump tool
         run: MAVFRAME_DUMP=$PWD/build-asan/mavframe-dump python3 -m pytest tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: WebAssembly tests against the sanitized native builds (glue and dump tool)
+        run: MAVFRAME_DUMP=$PWD/build-asan/mavframe-dump MAVFRAME_GLUE_DUMP=$PWD/build-asan/glue_dump node --test tests/web/test_wasm.mjs
 
   fuzz:
     runs-on: ubuntu-latest

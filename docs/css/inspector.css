@@ -31,12 +31,13 @@ main { padding: 12px 20px 20px; display: grid; gap: 12px; }
 progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 
 /* Summary: one bordered strip, cells divided by 1px rules */
-.metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
-.metrics > div { padding: 8px 14px; border-left: 1px solid var(--border); min-width: 0; }
-.metrics > div:first-child { border-left: 0; }
+/* Each cell draws a 1px rule on its right and bottom edge; the rules on the
+   outer edges fall outside the box and are clipped. */
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+.metrics > div { padding: 8px 14px; min-width: 0; box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border); }
 .metrics dt { font-size: .85em; color: var(--fg-muted); font-weight: 700; }
 .metrics dd { margin: 0; font-family: var(--mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.metrics dd .sub { display: block; font-family: var(--font); font-size: .8rem; color: var(--fg-muted); }
+.metrics dd .sub { display: block; overflow-wrap: anywhere; font-family: var(--font); font-size: .8rem; color: var(--fg-muted); }
 .metrics dd.bad { color: var(--bad); }
 .metrics dd.warn { color: var(--warn); }
 
@@ -61,7 +62,8 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 #timeline .crc path { fill: var(--bad); }
 #timeline .gap line { stroke: var(--warn); stroke-width: 1.5; }
 #timeline .gap rect { fill: var(--warn); }
-#timeline .reject line { stroke: var(--fg-muted); stroke-width: 1; stroke-dasharray: 2 2; }
+#timeline .reject line, #timeline .unsupported line, #timeline .duplicate line, #timeline .reorder line { stroke: var(--fg-muted); stroke-width: 1; stroke-dasharray: 2 2; }
+.g-unsup { stroke: var(--fg-muted); stroke-width: 1.5; stroke-dasharray: 2 2; }
 #timeline .cursor { stroke: var(--accent); stroke-width: 2; }
 .axis { display: flex; justify-content: space-between; font-size: .8rem; color: var(--fg-muted); margin-top: 2px; }
 
@@ -86,7 +88,7 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
 .kind { display: inline-flex; align-items: center; gap: 5px; }
 .kind.crc { color: var(--bad); font-weight: 700; }
 .kind.gap { color: var(--warn); font-weight: 700; }
-.kind.reject { color: var(--fg-muted); font-weight: 700; }
+.kind.reject, .kind.unsupported, .kind.duplicate, .kind.reorder { color: var(--fg-muted); font-weight: 700; }
 .note-gap { color: var(--warn); }
 
 .chips { display: inline-flex; gap: 6px; }
@@ -120,11 +122,6 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
 
 .footer { padding: 4px 20px 24px; font-size: .85em; max-width: 90ch; }
 
-@media (max-width: 1100px) {
-  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .metrics > div:nth-child(4) { border-left: 0; }
-  .metrics > div:nth-child(n+4) { border-top: 1px solid var(--border); }
-}
 @media (max-width: 900px) {
   .panes, .panes.detail { grid-template-columns: minmax(0, 1fr); }
 }
@@ -133,8 +130,5 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
   .app-header { padding: 10px 16px; }
   .tagline { display: none; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metrics > div:nth-child(n) { border-left: 1px solid var(--border); border-top: 1px solid var(--border); }
-  .metrics > div:nth-child(odd) { border-left: 0; }
-  .metrics > div:nth-child(-n+2) { border-top: 0; }
   .footer { padding: 4px 16px 20px; }
 }

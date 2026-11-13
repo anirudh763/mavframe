@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
@@ -21,6 +22,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const DOCS = path.join(ROOT, "docs");
 const truth = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/web/sample-truth.json"), "utf8"));
 const AXE = process.env.AXE_PATH || require.resolve("axe-core/axe.min.js");
+const CASES = fs.mkdtempSync(path.join(os.tmpdir(), "mavframe-ui-cases-"));
+{
+  const gen = spawnSync("python3", [path.join(ROOT, "tests/web/gen_cases.py"), CASES]);
+  assert.equal(gen.status, 0, gen.stderr.toString());
+}
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm",
   ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png" };
@@ -50,14 +56,21 @@ after(async () => {
 });
 
 async function openPage(opts = {}) {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, ...opts });
+  const { hash, route, noWait, ...ctx } = opts;
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, ...ctx });
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
   page.errors = errors;
-  await page.goto(base + (opts.hash || ""));
-  await waitParsed(page, "sample-flight.tlog");
+  if (route) await route(page);
+  await page.goto(base + (hash || ""));
+  if (!noWait) await waitParsed(page, "sample-flight.tlog");
   return page;
+}
+
+const statusText = (page) => page.textContent("#status");
+async function upload(page, file) {
+  await page.setInputFiles("#file", file);
 }
 
 function waitParsed(page, name, timeout = 30000) {
@@ -199,5 +212,156 @@ test("screenshot for the README", { skip: !process.env.SCREENSHOT }, async () =>
   await page.evaluate(() => document.activeElement.blur());
   fs.mkdirSync(path.join(DOCS, "screenshots"), { recursive: true });
   await page.screenshot({ path: path.join(DOCS, "screenshots", "inspector.png") });
+  await page.close();
+});
+
+test("keyboard only: load the sample, step to an issue, move through rows", async () => {
+  const page = await openPage();
+  async function tabTo(selector, max = 80) {
+    for (let i = 0; i < max; i++) {
+      await page.keyboard.press("Tab");
+      if (await page.evaluate((sel) => document.activeElement === document.querySelector(sel), selector)) return;
+    }
+    throw new Error(`could not reach ${selector} with Tab`);
+  }
+  await tabTo("#load-sample");
+  const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+  assert.notEqual(outline, "none", "focus indicator visible");
+  await page.keyboard.press("Enter");
+  await waitParsed(page, "sample-flight.tlog");
+  await tabTo("#next-issue");
+  await page.keyboard.press("Enter");
+  assert.match(await page.textContent("#decoded .lead"), /CRC error at offset/);
+  await tabTo('#list-table .rowbtn[aria-current="true"]');
+  await page.keyboard.press("ArrowDown");
+  assert.match(await page.textContent("#decoded .lead"), /Sequence gap|frame/);
+  await tabTo("#file");
+  await tabTo("#format");
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+test("375 px width and 200% zoom: no horizontal page scroll, controls on screen", async () => {
+  for (const [label, opts] of [
+    ["375 px", { viewport: { width: 375, height: 800 } }],
+    ["200% page zoom of a 1280 px window", { viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 }],
+  ]) {
+    const page = await openPage(opts);
+    const r = await page.evaluate(() => {
+      const ids = ["load-sample", "next-issue", "view-issues", "m-frames", "m-crc", "m-unsupported"];
+      return { scroll: document.documentElement.scrollWidth, width: window.innerWidth,
+        out: ids.filter((id) => { const b = document.getElementById(id).getBoundingClientRect(); return b.right > window.innerWidth + 0.5 || b.left < 0; }) };
+    });
+    assert.ok(r.scroll <= r.width, `${label}: page is ${r.scroll}px wide in a ${r.width}px viewport`);
+    assert.deepEqual(r.out, [], `${label}: controls outside the viewport`);
+    await page.close();
+  }
+  // 200% text size (browser text-only zoom) at 1280 px.
+  const page = await openPage({ viewport: { width: 1280, height: 900 } });
+  await page.addStyleTag({ content: "html { font-size: 30px !important; }" });
+  const r = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
+  assert.ok(r.scroll <= r.width, `200% text: page is ${r.scroll}px wide`);
+  await page.close();
+});
+
+test("error states: empty file, not a MAVLink file, oversized file, network failures", async () => {
+  const page = await openPage();
+  const empty = path.join(CASES, "empty.tlog");
+  fs.writeFileSync(empty, Buffer.alloc(0));
+  await upload(page, empty);
+  await page.waitForFunction(() => /is empty/.test(document.getElementById("status").textContent));
+  assert.ok(await page.$eval("#status", (e) => e.classList.contains("error")));
+  assert.equal(await metric(page, "m-frames"), String(truth.frames), "the previous capture stays on screen");
+
+  const bad = path.join(CASES, "notes.txt");
+  fs.writeFileSync(bad, "This is a text file, not telemetry.\n".repeat(200));
+  await upload(page, bad);
+  await page.waitForFunction(() => /No MAVLink v2 frames found in notes.txt/.test(document.getElementById("status").textContent));
+  assert.equal(await metric(page, "m-frames"), "0");
+  assert.match(await page.textContent("#list-table tbody"), /No frames to show/);
+
+  // A file over the size limit is refused before it is read.
+  await page.evaluate(() => {
+    const input = document.getElementById("file");
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(16)], "huge.tlog"));
+    input.files = dt.files;
+    Object.defineProperty(input.files[0], "size", { value: 300 * 1024 * 1024 });
+    input.dispatchEvent(new Event("change"));
+  });
+  await page.waitForFunction(() => /huge.tlog is 300 MB.*up to 256 MB/.test(document.getElementById("status").textContent));
+  assert.deepEqual(page.errors, []);
+  await page.close();
+
+  const noSample = await openPage({ noWait: true, route: (p) => p.route("**/sample/sample-flight.tlog", (r) => r.abort()) });
+  await noSample.waitForFunction(() => /Could not load the sample/.test(document.getElementById("status").textContent));
+  assert.ok(await noSample.$eval("#status", (e) => e.classList.contains("error")));
+  assert.equal(await noSample.isEnabled("#file"), true, "a local file can still be opened");
+  await noSample.close();
+
+  const noWasm = await openPage({ noWait: true, route: (p) => p.route("**/mavframe.wasm", (r) => r.abort()) });
+  await noWasm.waitForFunction(() => /Could not load the parser/.test(document.getElementById("status").textContent));
+  await noWasm.close();
+});
+
+test("parsing can be cancelled; the previous capture stays", async () => {
+  const page = await openPage();
+  const sample = fs.readFileSync(path.join(ROOT, truth.file));
+  const big = path.join(CASES, "cancel.tlog");
+  fs.writeFileSync(big, Buffer.concat(Array(400).fill(sample)));
+  await upload(page, big);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.waitForFunction(() => /Cancelled parsing cancel.tlog. Still showing sample-flight.tlog/.test(document.getElementById("status").textContent));
+  assert.equal(await metric(page, "m-frames"), String(truth.frames));
+  assert.equal(await page.isHidden("#cancel"), true);
+  assert.equal(await page.isEnabled("#load-sample"), true);
+  await page.close();
+});
+
+test("signed frames say 'signature present; not verified'", async () => {
+  const page = await openPage();
+  await upload(page, path.join(CASES, "signed.tlog"));
+  await waitParsed(page, "signed.tlog");
+  assert.equal(await metric(page, "m-frames"), "20");
+  await page.locator("#list-table .rowbtn").nth(2).click();
+  const decoded = await page.textContent("#decoded");
+  assert.match(decoded, /signature present; not verified/);
+  assert.doesNotMatch(decoded.replace(/not verified/g, ""), /verified|valid signature|authentic/i);
+  assert.match(await page.textContent("#list-table tbody"), /signature present; not verified/);
+  assert.equal(await page.locator("#hex .seg-sig").count(), 13);
+  await page.close();
+});
+
+test("unknown message ids are shown as unsupported, separate from CRC errors", async () => {
+  const page = await openPage();
+  await upload(page, path.join(CASES, "malformed.bin"));
+  await page.waitForFunction(() => /^malformed.bin:/.test(document.getElementById("status").textContent) && !document.getElementById("load-sample").disabled);
+  assert.ok(Number(await metric(page, "m-unsupported")) >= 1);
+  assert.ok(Number(await metric(page, "m-crc")) >= 1);
+  await page.getByRole("button", { name: /^Issues/ }).click();
+  const kinds = await page.$$eval("#list-table tbody .kind", (els) => els.map((e) => e.textContent));
+  assert.ok(kinds.includes("Unsupported id") && kinds.includes("CRC error") && kinds.includes("Bad flags"), kinds.join(","));
+  await page.locator("#list-table tbody tr", { hasText: "Unsupported id" }).first().locator(".rowbtn").click();
+  const decoded = await page.textContent("#decoded");
+  assert.match(decoded, /not counted as corrupt/);
+  await page.addScriptTag({ path: AXE });
+  const v = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] })).violations.map((x) => x.id));
+  assert.deepEqual(v, [], "axe on the issue view of a malformed capture");
+  await page.close();
+});
+
+test("duplicate and backward sequence numbers are labelled, not shown as missing frames", async () => {
+  const page = await openPage();
+  for (const [file, kind] of [["seq-duplicate.bin", "Duplicate seq"], ["seq-backwards.bin", "Out of order"]]) {
+    await upload(page, path.join(CASES, file));
+    await waitParsed(page, file);
+    assert.equal(await metric(page, "m-gaps"), "0", file);
+    assert.match(await page.textContent("#m-gaps"), /~0 frames missing if packets arrived in order/);
+    assert.equal(await metric(page, "m-crc"), "0");
+    await page.getByRole("button", { name: /^Issues/ }).click();
+    assert.deepEqual(await page.$$eval("#list-table tbody .kind", (els) => els.map((e) => e.textContent)), [kind]);
+    await page.locator("#list-table .rowbtn").first().click();
+    assert.match(await page.textContent("#decoded"), /Not counted as missing/);
+  }
   await page.close();
 });

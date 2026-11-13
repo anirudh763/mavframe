@@ -37,6 +37,7 @@
     <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
     <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
     <span id="progress-text" class="muted mono" hidden></span>
+    <button type="button" class="btn" id="cancel" hidden>Cancel</button>
   </div>
 
   <section aria-labelledby="h-summary">
@@ -44,9 +45,10 @@
     <dl class="metrics" id="metrics">
       <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
       <div><dt>CRC errors</dt><dd id="m-crc">–</dd></div>
+      <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
       <div><dt>Sequence gaps</dt><dd id="m-gaps">–</dd></div>
       <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
-      <div><dt>Rejected candidates</dt><dd id="m-rejects">–</dd></div>
+      <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
       <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
     </dl>
   </section>
@@ -57,6 +59,7 @@
       <ul class="legend" aria-label="Timeline markers">
         <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC error</li>
         <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
+        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Other: unsupported id, bad flags, duplicate or out-of-order seq</li>
         <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-density" x="1" y="4" width="10" height="7"/></svg>Frames per interval</li>
       </ul>
       <span class="spacer"></span>
@@ -135,7 +138,8 @@
   <p>Files are read in this browser tab and never uploaded. Frames are found and CRC-checked by
   <code>src/mavframe.c</code> compiled to WebAssembly; payload fields of HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE,
   GLOBAL_POSITION_INT and VFR_HUD are decoded from the official MAVLink XML definitions. MAVLink v1 frames are not parsed
-  and count as skipped bytes.</p>
+  and count as skipped bytes. Message signatures are shown as present but are not verified. Captures up to 256 MB.
+  Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
 </footer>
 </body>
 </html>

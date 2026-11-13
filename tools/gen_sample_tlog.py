@@ -178,14 +178,28 @@ def main():
         if r["kind"] in ("ok", "crc"):
             e = per_msg.setdefault(str(r["msgid"]), {"name": r["name"], "count": 0, "crc_errors": 0})
             e["count" if r["kind"] == "ok" else "crc_errors"] += 1
-    gaps, missing, last = [], 0, {}
+    # Sequence findings per (system, component), same rule as the inspector:
+    # step 1 in order, 0 duplicate, 2..128 gap (step-1 missing if in order),
+    # 129..255 backwards (late frame if <= 16 back, otherwise a reset).
+    gaps, missing, duplicates, reorders, last = [], 0, 0, 0, {}
     for r in ok:
         key = (r["sysid"], r["compid"])
-        if key in last and r["seq"] != (last[key] + 1) & 0xFF:
-            n = (r["seq"] - last[key] - 1) & 0xFF
-            gaps.append({"offset": r["offset"], "sysid": r["sysid"], "compid": r["compid"], "missing": n})
-            missing += n
-        last[key] = r["seq"]
+        if key not in last:
+            last[key] = r["seq"]
+            continue
+        d = (r["seq"] - last[key]) & 0xFF
+        if d == 1:
+            last[key] = r["seq"]
+        elif d == 0:
+            duplicates += 1
+        elif d <= 128:
+            gaps.append({"offset": r["offset"], "sysid": r["sysid"], "compid": r["compid"], "missing": d - 1})
+            missing += d - 1
+            last[key] = r["seq"]
+        else:
+            reorders += 1
+            if 256 - d > 16:
+                last[key] = r["seq"]
 
     # Cross-check with pymavlink's own .tlog reader (robust parsing).
     log = mavutil.mavlink_connection(TLOG, dialect="common", robust_parsing=True)
@@ -209,6 +223,8 @@ def main():
         "crc_errors": sum(1 for r in records if r["kind"] == "crc"),
         "gaps": len(gaps),
         "missing_frames": missing,
+        "duplicates": duplicates,
+        "reorders": reorders,
         "gap_list": gaps,
         "skipped_bytes": len(out) - sum(r["len"] for r in ok) - 8 * len(ok),
         "v1_records": sum(1 for r in records if r["kind"] == "v1"),
