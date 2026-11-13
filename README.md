@@ -103,23 +103,54 @@ Live at https://anirudh763.github.io/mavframe/ (GitHub Pages, served from
 `docs/` on `main`). Locally: `python3 -m http.server -d docs` and open
 http://localhost:8000/.
 
-![mavframe inspector showing the synthetic sample flight with a CRC error selected](docs/screenshots/inspector.png)
+![The Frames screen at 1440 px: frame rows filtered to CRC failures, and below them the field tree and hex bytes of ATTITUDE at offset 13,866 with wire 0xA4FE vs computed 0x66D8](docs/screenshots/frame-details-1440.png)
 
 `docs/` is a static page that runs this parser in the browser: `src/mavframe.c`,
 unchanged, compiled to a 4,086-byte WebAssembly module together with a small
 glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
 microsecond timestamp before each frame) or a raw byte stream, or press
-**Load sample flight**. Files are read in the tab and never uploaded.
+**Load engineering sample**. Files are read in the tab and never uploaded.
 
-The page shows a message table (id, name, count, rate from .tlog timestamps,
-CRC errors, and the sending system:component with its own rate when more than
-one sends the message), a timeline with CRC errors and sequence
-findings marked, frame and issue lists that can be filtered by message, and the
-selected frame's bytes and decoded fields. Payload fields are decoded for
+It works like a packet analyzer (modelled on Wireshark's packet list, packet
+details and packet bytes panes):
+
+- **Capture** (`#/capture`): load a file, then the summary counts, the
+  assumptions behind them and a message table (count, rate from .tlog
+  timestamps, CRC failures, and each sending system:component with its own rate).
+- **Frames** (`#/frames`): a timeline with CRC failures and sequence findings
+  marked, and one row per valid frame or rejected candidate with its time,
+  byte offset, message, sys:comp, sequence number and check (Valid CRC, CRC
+  failed, Unsupported, Bad flags). Filter by check or message; the filter,
+  page and selection are in the URL, so a view can be shared.
+- **Frame details** (`#/frames/<row>`): the header, decoded payload, CRC and
+  signature fields next to the hex bytes. Selecting a field highlights its
+  bytes; clicking a byte selects its field; with the bytes focused, Left and
+  Right move between fields. The CRC from the capture and the CRC computed by
+  `mavframe_crc16()` are shown side by side. On wide screens this sits under
+  the frame list; on narrow screens it is its own screen with Decoded, Bytes
+  and Header tabs.
+- **Export finding (JSON)**: one row as a portable JSON file with the mavframe
+  version, file name, size and SHA-256, offsets, CRC wire vs computed and the
+  parser's assumptions. Payload bytes are left out unless the message carries
+  no position (HEARTBEAT, SYS_STATUS, ATTITUDE) or you tick "Include raw
+  payload bytes".
+- **Format help** (`#/help`): the frame layout, what CRC failed vs unsupported
+  means, and the sequence-gap assumptions.
+
+The page is light by default; a "Dark theme" toggle switches to dark and is
+remembered in the browser. Payload fields are decoded for
 HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD,
 from an excerpt of the official MAVLink XML (`tools/mavlink-xml/`, pinned
 commit, SHA-256 checked); `tools/gen_web_defs.py` fails unless field order,
 types, length and CRC_EXTRA equal pymavlink's.
+
+The bundled sample is an engineering fixture: `tools/gen_sample_tlog.py`
+generates it with known faults (1,496 valid frames, 3 CRC failures, 4 sequence
+gaps, 160 skipped bytes), so the tests can check exact counts. It is not a real
+flight. A search for a redistributable real MAVLink v2 .tlog found only
+MAVLink v1 captures (for example the 5.8 MB `flight.tlog` in the pymavlink and
+dronekit-la test data, which this parser reports as 0 valid v2 frames), so no
+real capture is bundled yet.
 
 What the counts mean:
 
@@ -272,6 +303,7 @@ Neither parser reported a frame that was not written to the stream.
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 17 passed (differential, command line, version)
 node --test tests/web/test_wasm.mjs   # 18 passed (WebAssembly build, see Browser inspector)
+node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs   # 42 passed: 5 + 19 + 18 (Chromium, Playwright, axe-core)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and
