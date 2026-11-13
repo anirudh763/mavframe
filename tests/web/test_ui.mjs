@@ -232,6 +232,7 @@ test("keyboard only: load the sample, step to an issue, move through rows", asyn
   await tabTo("#load-sample");
   const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
   assert.notEqual(outline, "none", "focus indicator visible");
+  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
   await page.keyboard.press("Enter");
   assert.match(await statusText(page), /^Loading sample-flight.tlog/);
   await waitParsed(page, "sample-flight.tlog");
