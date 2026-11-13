@@ -60,3 +60,39 @@ jobs:
         run: |
           mkdir -p corpus
           ./build-fuzz/fuzz_parse -max_total_time=60 -max_len=2048 corpus fuzz/seeds fuzz/regressions
+      - name: Fuzz the WebAssembly glue for 30 seconds
+        run: |
+          cmake --build build-fuzz --target fuzz_wasm_glue
+          mkdir -p corpus-glue
+          ./build-fuzz/fuzz_wasm_glue -max_total_time=30 -max_len=2048 corpus-glue fuzz/seeds fuzz/regressions
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python tools (pymavlink, zig)
+        run: pip install -r requirements-dev.txt ziglang==0.17.1
+      - name: Build the native parser (compared against the wasm build)
+        run: cmake -S . -B build && cmake --build build
+      - name: Committed docs/mavframe.wasm matches a fresh build
+        run: |
+          sh tools/build_wasm.sh "$RUNNER_TEMP/mavframe.wasm"
+          cmp "$RUNNER_TEMP/mavframe.wasm" docs/mavframe.wasm
+      - name: Generated message definitions and sample capture are up to date
+        run: |
+          python3 tools/gen_web_defs.py | diff - docs/js/msgdefs.js
+          python3 tools/gen_sample_tlog.py
+          git diff --exit-code docs/sample tests/web/sample-truth.json
+      - name: Wasm parser tests (Node)
+        run: node --test tests/web/test_wasm.mjs
+      - name: Browser tests and axe-core gate (Playwright, Chromium)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0 axe-core@4.14.0
+          npx playwright install --with-deps chromium
+          node --test tests/web/test_ui.mjs

@@ -37,4 +37,10 @@ if(MAVFRAME_FUZZ)
   target_include_directories(fuzz_parse PRIVATE include)
   target_compile_options(fuzz_parse PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
   target_link_options(fuzz_parse PRIVATE -fsanitize=fuzzer,address,undefined)
+
+  # The browser glue (web/wasm/), built natively so the sanitizers see it.
+  add_executable(fuzz_wasm_glue fuzz/fuzz_wasm_glue.c web/wasm/mavframe_wasm.c src/mavframe.c)
+  target_include_directories(fuzz_wasm_glue PRIVATE include)
+  target_compile_options(fuzz_wasm_glue PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
+  target_link_options(fuzz_wasm_glue PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
