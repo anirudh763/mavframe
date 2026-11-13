@@ -375,3 +375,18 @@ test("critic's .tlog (20,000 frames, 3 senders, seed 9001): nested fake frames a
   assert.equal(r.crcErrors + r.unsupported + r.rejects + r.timestampArtifacts + r.insideFailedFrame,
     r.stats.bad_crc + r.stats.unknown_msgid + r.stats.bad_flags);
 });
+
+test("ArduPilot capture: payload bytes of unsupported frames are not rejects, and they use up sequence numbers", async () => {
+  // HEARTBEAT (common) alternating with MEMINFO (id 152, ardupilotmega only);
+  // MEMINFO's payload contains 0xFD. A clean capture: no rejects, no gaps.
+  const expect = JSON.parse(fs.readFileSync(path.join(CASES, "ardupilot.json"), "utf8"));
+  for (const format of ["tlog", "raw"]) {
+    const r = await analyze(readCase("ardupilot.tlog"), { parser, format });
+    assert.equal(r.validFrames, expect.frames, format);
+    assert.equal(r.unsupported, expect.unsupported, format);
+    assert.equal(r.rejects, expect.rejects, `${format}: rejects`);
+    assert.equal(r.crcErrors, expect.crc_errors, format);
+    assert.equal(r.gaps, expect.gaps, `${format}: sequence gaps`);
+    assert.equal(r.missingFrames, 0, format);
+  }
+});

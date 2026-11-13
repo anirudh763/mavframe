@@ -19,6 +19,11 @@
                  errors, no other issues. Counts in corrupt-ts.json.
   critic-9001.tlog/.json  the reviewer's independent corrupted .tlog
                  (tests/web/gen_critic_tlog.py, seed 9001)
+  ardupilot.tlog/.json  clean ArduPilot-style capture: 100 HEARTBEAT and
+                 100 MEMINFO (id 152, ardupilotmega dialect, not in common)
+                 alternating from one sender, brkval 0x05FD so the payload
+                 holds a 0xFD byte. Expected: 100 frames, 100 unsupported,
+                 0 rejects, 0 sequence gaps.
   seq-*.bin      HEARTBEATs from one component with chosen sequence numbers
                  (see SEQ_CASES) for the sequence classification tests
 """
@@ -126,6 +131,23 @@ def main():
         f.write(recs)
     with open(os.path.join(out, "corrupt-ts.json"), "w", encoding="utf-8") as f:
         f.write('{"records": 2000, "crc_errors": %d, "frames": %d}\n' % (crc, 2000 - crc))
+
+    # Clean capture with messages from another dialect (ardupilotmega).
+    from pymavlink.dialects.v20 import ardupilotmega as apm
+    lk = apm.MAVLink(None, srcSystem=1, srcComponent=1)
+    rec = bytearray()
+    for i in range(200):
+        if i % 2 == 0:
+            m = apm.MAVLink_heartbeat_message(2, 3, 81, 4, 4, 3)
+        else:
+            m = apm.MAVLink_meminfo_message(0x05FD, 0x0707, 0)
+        fr = bytes(m.pack(lk))
+        lk.seq = (lk.seq + 1) % 256
+        rec += struct.pack(">Q", 1767225600000000 + i * 50000) + fr
+    with open(os.path.join(out, "ardupilot.tlog"), "wb") as f:
+        f.write(rec)
+    with open(os.path.join(out, "ardupilot.json"), "w", encoding="utf-8") as f:
+        f.write('{"frames": 100, "unsupported": 100, "rejects": 0, "gaps": 0, "crc_errors": 0}\n')
 
     gen_critic_tlog.main(os.path.join(out, "critic-9001.tlog"))
 

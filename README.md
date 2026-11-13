@@ -101,7 +101,11 @@ What the counts mean:
   record's 8 timestamp bytes.
 - **Unsupported messages**: a header whose message id is not in the common
   dialect. Its checksum cannot be checked, so it is skipped and not called
-  corrupt.
+  corrupt. The parser checks only such a frame's header, so a 0xFD in its payload can
+  look like a frame start; those candidates are not reported as rejects, and
+  the frame still counts for sequence tracking when its number is the next one
+  (a clean ArduPilot test capture with MEMINFO, id 152, gives 0 rejects and
+  0 gaps).
 - **Sequence gaps**: per system and component, a forward jump of 2 to 128 in the
   8-bit sequence number. "~N frames missing" assumes frames arrive in order; a
   late frame looks the same, so it is an estimate. It also assumes one fully
@@ -137,8 +141,8 @@ dropped frame and the three corrupted ones), 0 duplicates, 0 out of order,
 pip install ziglang==0.17.1
 sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
 cmake --build build                    # also builds build/glue_dump: the same glue, native
-node --test tests/web/test_wasm.mjs    # 17 tests
-node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
+node --test tests/web/test_wasm.mjs    # 18 tests
+node --test tests/web/test_ui.mjs      # 14 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
 ```
 
 - The wasm and native builds of the same files give identical events (offset,
@@ -235,7 +239,7 @@ Neither parser reported a frame that was not written to the stream.
 ```sh
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 8 passed
-node --test tests/web/test_wasm.mjs   # 17 passed (WebAssembly build, see Browser inspector)
+node --test tests/web/test_wasm.mjs   # 18 passed (WebAssembly build, see Browser inspector)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and
