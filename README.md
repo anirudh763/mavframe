@@ -99,8 +99,8 @@ python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
 
 ## Browser inspector
 
-The page is not published yet; it will be served from `docs/` once GitHub
-Pages is enabled. Locally: `python3 -m http.server -d docs` and open
+Live at https://anirudh763.github.io/mavframe/ (GitHub Pages, served from
+`docs/` on `main`). Locally: `python3 -m http.server -d docs` and open
 http://localhost:8000/.
 
 ![mavframe inspector showing the synthetic sample flight with a CRC error selected](docs/screenshots/inspector.png)
