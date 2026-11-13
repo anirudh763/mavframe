@@ -125,6 +125,9 @@ test("Load sample flight shows the generator's exact counts", async () => {
   assert.match(await page.textContent("#decoded"), /yaw \(extension\)\s*0\s*cdeg\s*not provided/);
   await page.locator("#msg-table").getByRole("button", { name: "GPS_RAW_INT" }).click();
   assert.deepEqual(await cspViolations(page), [], "CSP violations");
+  // The external link must not replace the loaded capture.
+  assert.equal(await page.getAttribute("#gap-assumptions a", "target"), "_blank");
+  assert.match(await page.getAttribute("#gap-assumptions a", "rel"), /noopener/);
   // Timeline markers.
   assert.equal(await page.locator("#timeline g.crc").count(), truth.crc_errors);
   assert.equal(await page.locator("#timeline g.gap").count(), truth.gaps);
@@ -283,6 +286,7 @@ test("375 px width and 200% zoom: no horizontal page scroll, controls on screen"
     });
     assert.ok(r.scroll <= r.width, `${label}: page is ${r.scroll}px wide in a ${r.width}px viewport`);
     assert.deepEqual(r.out, [], `${label}: controls outside the viewport`);
+    if (label === "375 px") assert.equal(await page.isVisible(".scroll-hint"), true, "sideways-scroll hint for the messages table");
     await page.close();
   }
   // 200% text size (browser text-only zoom) at 1280 px.

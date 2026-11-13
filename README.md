@@ -94,9 +94,11 @@ What the counts mean:
 
 - **CRC errors**: a candidate frame (a 0xFD start byte, a plausible header and
   enough bytes) whose checksum fails. On a noisy link many of these are random
-  bytes that only looked like a header, not damaged real frames. In .tlog mode,
-  candidates that start inside a record's 8 timestamp bytes or inside a frame
-  that already failed its CRC are not reported as separate issues.
+  bytes that only looked like a header, not damaged real frames. Candidates the
+  parser finds inside a frame that already failed its CRC (including a fake
+  header there whose own CRC also fails) are part of that one error, not
+  separate issues; in .tlog mode, neither are candidates that start inside a
+  record's 8 timestamp bytes.
 - **Unsupported messages**: a header whose message id is not in the common
   dialect. Its checksum cannot be checked, so it is skipped and not called
   corrupt.
@@ -114,7 +116,9 @@ What the counts mean:
   0xFD byte inside a timestamp that the parser briefly takes for a frame start
   is not reported as a link error (20 in the sample). A test with 2,000 records,
   200 of them corrupted and many timestamps containing 0xFD, reports exactly
-  200 CRC errors and no other rejects.
+  200 CRC errors and no other rejects; so does the reviewer's independent file
+  (`tests/web/gen_critic_tlog.py`, seed 9001: 20,000 frames from 3 senders,
+  200 corrupted, one of them hiding a fake frame whose CRC also fails).
 
 Captures up to 256 MB are accepted; larger files get a message instead. Parsing
 runs in 512 kB chunks with a progress bar and a Cancel button. Details are kept
@@ -133,7 +137,7 @@ dropped frame and the three corrupted ones), 0 duplicates, 0 out of order,
 pip install ziglang==0.17.1
 sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
 cmake --build build                    # also builds build/glue_dump: the same glue, native
-node --test tests/web/test_wasm.mjs    # 16 tests
+node --test tests/web/test_wasm.mjs    # 17 tests
 node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
 ```
 
@@ -231,7 +235,7 @@ Neither parser reported a frame that was not written to the stream.
 ```sh
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 8 passed
-node --test tests/web/test_wasm.mjs   # 14 passed (WebAssembly build, see Browser inspector)
+node --test tests/web/test_wasm.mjs   # 17 passed (WebAssembly build, see Browser inspector)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and

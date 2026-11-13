@@ -17,6 +17,8 @@
                  hold a 0xFD byte that looks like a frame start (before valid
                  and before corrupted frames). Expected: exactly 200 CRC
                  errors, no other issues. Counts in corrupt-ts.json.
+  critic-9001.tlog/.json  the reviewer's independent corrupted .tlog
+                 (tests/web/gen_critic_tlog.py, seed 9001)
   seq-*.bin      HEARTBEATs from one component with chosen sequence numbers
                  (see SEQ_CASES) for the sequence classification tests
 """
@@ -26,7 +28,9 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness  # noqa: E402  (tests/harness.py)
+import gen_critic_tlog  # noqa: E402
 from pymavlink.dialects.v10 import common as mav1  # noqa: E402
 from pymavlink.dialects.v20 import common as mav  # noqa: E402
 
@@ -122,6 +126,8 @@ def main():
         f.write(recs)
     with open(os.path.join(out, "corrupt-ts.json"), "w", encoding="utf-8") as f:
         f.write('{"records": 2000, "crc_errors": %d, "frames": %d}\n' % (crc, 2000 - crc))
+
+    gen_critic_tlog.main(os.path.join(out, "critic-9001.tlog"))
 
     boundary = (hb + signed[0] + bytes(flipped) + unknown + bytes(badflags) + noise[:9] + frames[5])
     with open(os.path.join(out, "boundary.bin"), "wb") as f:

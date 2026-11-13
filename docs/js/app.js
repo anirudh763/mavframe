@@ -605,7 +605,7 @@ function renderDetail() {
     if (issue && SEQ_KINDS.has(issue.kind)) {
       const who = `System ${issue.sysid} component ${issue.compid}`;
       const text = issue.kind === "gap"
-        ? `${who} went from seq ${issue.prevSeq} to ${issue.seq}. If its frames arrived in order, about ${issue.missing} ` +
+        ? `${who} went from seq ${issue.prevSeq} to ${issue.seq}. Assuming one fully observed channel and in-order arrival, about ${issue.missing} ` +
           `frame${issue.missing === 1 ? " is" : "s are"} missing before this one. This is an estimate from sequence numbers ` +
           "(a late frame looks the same), not a CRC error; CRC errors are counted separately."
         : issue.kind === "duplicate"

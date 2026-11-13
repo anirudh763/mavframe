@@ -177,6 +177,7 @@ export async function analyze(bytes, opts = {}) {
   const lastSeq = new Int16Array(65536).fill(-1);
   let timestampArtifacts = 0;
   let insideFailedFrame = 0;
+  let nestedCrc = 0;
   let failedStart = -1;
   let failedEnd = -1;
   let framesWithTs = 0;
@@ -222,8 +223,14 @@ export async function analyze(bytes, opts = {}) {
           ts: Number.isNaN(own) ? lastTs : own, frame: n };
         // After a CRC failure the parser rescans that frame's bytes for
         // another 0xFD. Candidates it rejects there are pieces of the damaged
-        // frame, already reported as one CRC error, not separate issues.
-        if (kind !== "crc" && e.off > failedStart && e.off < failedEnd) { insideFailedFrame++; continue; }
+        // frame, already reported as one CRC error, not separate issues. This
+        // includes a fake header inside it whose CRC also fails (nestedCrc):
+        // the window stays that of the outer frame.
+        if (e.off > failedStart && e.off < failedEnd) {
+          insideFailedFrame++;
+          if (kind === "crc") nestedCrc++;
+          continue;
+        }
         if (kind === "crc") { failedStart = e.off; failedEnd = e.off + e.flen; }
         if (!tlog) { commit(it); continue; }
         // Events arrive in stream order, so the next frame starts after
@@ -248,6 +255,7 @@ export async function analyze(bytes, opts = {}) {
         else commit(it);
       }
       pending.length = 0;
+      failedStart = failedEnd = -1; // a valid frame ends any damaged span
       const t = tsBefore(e.off);
       if (!Number.isNaN(t)) { framesWithTs++; lastTs = t; }
       const key = (e.sysid << 8) | e.compid;
@@ -340,7 +348,8 @@ export async function analyze(bytes, opts = {}) {
     duplicates: counts.duplicate,
     reorders: counts.reorder,
     timestampArtifacts,
-    insideFailedFrame, // rejected candidates inside a CRC-failed frame (not listed)
+    insideFailedFrame, // candidates inside a CRC-failed frame (not listed), including...
+    nestedCrc, // ...those whose own CRC also failed (counted by the parser as bad_crc)
     skippedBytes: stats.dropped_bytes - (tlog ? 8 * framesWithTs : 0),
     firstTs,
     endTs,

@@ -55,6 +55,8 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 .swatch { display: inline-block; padding: 0 2px; border-radius: 2px; color: var(--fg); font-size: .95em; line-height: 1.4; }
 .swatch.seg-pay { box-shadow: inset 0 0 0 1px var(--border); }
 .cap-note { margin: 4px 0 0; }
+.scroll-hint { display: none; }
+@media (max-width: 560px) { .scroll-hint { display: inline; } }
 td.sources { white-space: normal; }
 td.sources .src { display: block; white-space: nowrap; }
 .decoded table.dense td:first-child { white-space: nowrap; overflow-wrap: normal; }
