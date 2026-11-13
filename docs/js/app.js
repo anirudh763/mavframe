@@ -518,6 +518,8 @@ function renderHex(start, end, segs) {
     for (let o = row; o < row + 16; o++) {
       if (o < end) {
         const s = segOf(o);
+        // Screen readers get the region name where the region starts; sighted users get the underline pattern.
+        if (s && (o === s.from || o === start)) frag.append(el("span", { class: "sr-only", text: `${s.name}: ` }));
         frag.append(el("span", { class: "b " + (s ? s.cls : ""), title: s ? s.name : null, text: hex2(bytes[o]) }));
         ascii += bytes[o] >= 0x20 && bytes[o] < 0x7f ? String.fromCharCode(bytes[o]) : ".";
       } else {

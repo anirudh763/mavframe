@@ -1,7 +1,7 @@
 /* App-specific styles for the mavframe inspector. Base tokens come from ui.css. */
-:root { --seg-ts: #eef1f4; --seg-hdr: #e8f0fe; --seg-pay: #ffffff; --seg-crc: #fff8c5; --seg-sig: #dafbe1; --density: #afb8c1; }
+:root { --seg-ts: #eef1f4; --seg-hdr: #e8f0fe; --seg-pay: #ffffff; --seg-crc: #fff8c5; --seg-sig: #dafbe1; --density: #818b98; }
 @media (prefers-color-scheme: dark) {
-  :root { --seg-ts: #21262d; --seg-hdr: #121d2f; --seg-pay: #0d1117; --seg-crc: #272115; --seg-sig: #122117; --density: #484f58; }
+  :root { --seg-ts: #21262d; --seg-hdr: #121d2f; --seg-pay: #0d1117; --seg-crc: #272115; --seg-sig: #122117; --density: #656c76; }
 }
 
 [hidden] { display: none !important; }
@@ -10,12 +10,11 @@ h1, h2 { margin: 0; line-height: 1.3; }
 h1.name { font-size: 1.05rem; }
 h2 { font-size: .95rem; }
 .app-header { flex-wrap: wrap; row-gap: 4px; }
-.app-header nav { margin-left: auto; }
 .tagline { font-size: .9em; }
 main { padding: 12px 20px 20px; display: grid; gap: 12px; }
 .small { font-size: .85em; }
 .pad { padding: 12px 14px; margin: 0; }
-.mono, .num, td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mono, td.num, td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* Toolbar */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
@@ -36,7 +35,7 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
 .metrics > div { padding: 8px 14px; min-width: 0; box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border); }
 .metrics dt { font-size: .85em; color: var(--fg-muted); font-weight: 700; }
-.metrics dd { margin: 0; font-family: var(--mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metrics dd { margin: 0; font-size: 1.15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .metrics dd .sub { display: block; overflow-wrap: anywhere; font-family: var(--font); font-size: .8rem; color: var(--fg-muted); }
 .metrics dd.bad { color: var(--bad); }
 .metrics dd.warn { color: var(--warn); }
@@ -52,7 +51,7 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 .g-gap { fill: var(--warn); }
 .g-density { fill: var(--density); }
 /* Legend samples look like the hex bytes they describe. */
-.swatch { display: inline-block; padding: 0 2px; border-radius: 2px; color: var(--fg); font-size: .95em; line-height: 1.4; }
+.swatch { display: inline-block; padding: 0 2px; border-radius: 2px 2px 0 0; color: var(--fg); font-size: .95em; line-height: 1.4; }
 .swatch.seg-pay { box-shadow: inset 0 0 0 1px var(--border); }
 .cap-note { margin: 4px 0 0; }
 .scroll-hint { display: none; }
@@ -99,31 +98,30 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
 .kind.reject, .kind.unsupported, .kind.duplicate, .kind.reorder { color: var(--fg-muted); font-weight: 700; }
 .note-gap { color: var(--warn); }
 
-.chips { display: inline-flex; gap: 6px; }
-.chip { min-height: 28px; padding: 2px 12px; border: 1px solid var(--border-strong); border-radius: 2em; background: var(--bg); color: var(--fg); font: inherit; font-size: .9em; cursor: pointer; }
-.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 700; }
+.toggles { display: inline-flex; gap: 6px; }
 .filter { display: inline-flex; align-items: center; gap: 8px; font-size: .9em; }
 .small-btn { min-height: 28px; padding: 2px 10px; font-size: .9em; }
 .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid var(--border); }
 
 /* Hex dump */
-.hex { margin: 0; padding: 10px 14px; overflow: auto; font-size: .88rem; line-height: 1.6; white-space: pre; }
+.hex { position: relative; margin: 0; padding: 10px 14px; overflow: auto; font-size: .88rem; line-height: 1.6; white-space: pre; }
 .hex .off { color: var(--fg-muted); }
-.hex .b { padding: 0 1px; border-radius: 2px; }
-.seg-ts { background: var(--seg-ts); }
-.seg-hdr { background: var(--seg-hdr); }
+.hex .b { padding: 0 1px; border-radius: 2px 2px 0 0; }
+/* The tints alone are about 1.1:1 apart, so each region also gets its own
+   underline pattern (3:1 or more against the tint and the page); payload is
+   the unmarked region. The legend swatches use the same classes. */
+.seg-ts { background: var(--seg-ts); border-bottom: 2px dotted var(--fg-muted); }
+.seg-hdr { background: var(--seg-hdr); border-bottom: 2px solid var(--accent); }
 .seg-pay { background: var(--seg-pay); }
-.seg-crc { background: var(--seg-crc); }
-.seg-sig { background: var(--seg-sig); }
+.seg-crc { background: var(--seg-crc); border-bottom: 3px double var(--warn); }
+.seg-sig { background: var(--seg-sig); border-bottom: 2px dashed var(--ok); }
 .hex .ascii { color: var(--fg-muted); }
 
 /* Decoded pane */
 .decoded { overflow: auto; position: relative; }
 .decoded h3 { font-size: .9rem; margin: 0; padding: 8px 14px 4px; }
 .decoded .lead { margin: 0; padding: 10px 14px 4px; }
-.decoded .note { margin: 4px 14px 8px; padding: 6px 10px; border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: var(--radius); background: var(--bg-subtle); }
-.decoded .note.bad { border-left-color: var(--bad); }
-.decoded .note.warn { border-left-color: var(--warn); }
+.decoded .note { margin: 4px 14px 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-subtle); }
 .decoded table { margin-bottom: 6px; }
 .decoded table.dense td { white-space: normal; overflow-wrap: anywhere; }
 .decoded td.val { font-family: var(--mono); white-space: normal; overflow-wrap: anywhere; min-width: 12ch; }
@@ -145,4 +143,4 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
 }
 
 /* Shown only when JavaScript is off. */
-.noscript { margin: 12px 0; padding: 8px 12px; border: 1px solid var(--border); border-left: 4px solid var(--warn); border-radius: var(--radius); background: var(--warn-subtle); color: var(--fg); max-width: 80ch; }
+.noscript { margin: 12px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--warn-subtle); color: var(--fg); max-width: 80ch; }

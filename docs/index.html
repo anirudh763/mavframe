@@ -16,7 +16,7 @@
 <header class="app-header">
   <h1 class="name">mavframe inspector</h1>
   <span class="muted tagline">MAVLink v2 capture viewer. The parser is the project's C code compiled to WebAssembly.</span>
-  <nav aria-label="Project"><a href="https://github.com/anirudh763/mavframe">Source on GitHub</a></nav>
+  <a class="repo" href="https://github.com/anirudh763/mavframe">Source on GitHub</a>
 </header>
 
 <main id="main">
@@ -46,11 +46,11 @@
   <section aria-labelledby="h-summary">
     <h2 id="h-summary" class="sr-only">Summary</h2>
     <dl class="metrics" id="metrics">
-      <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
       <div><dt>CRC errors</dt><dd id="m-crc">–</dd></div>
-      <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
       <div><dt>Sequence gaps</dt><dd id="m-gaps" aria-describedby="gap-assumptions">–</dd></div>
       <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
+      <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
+      <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
       <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
       <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
     </dl>
@@ -96,9 +96,9 @@
     <section class="box" aria-labelledby="h-frames">
       <div class="box-header bar">
         <h2 id="h-frames">Frames</h2>
-        <div class="chips" role="group" aria-label="List">
-          <button type="button" class="chip" id="view-frames" aria-pressed="true">All frames</button>
-          <button type="button" class="chip" id="view-issues" aria-pressed="false">Issues</button>
+        <div class="toggles" role="group" aria-label="List">
+          <button type="button" class="btn" id="view-frames" aria-pressed="true">All frames</button>
+          <button type="button" class="btn" id="view-issues" aria-pressed="false">Issues</button>
         </div>
         <span id="filter" class="filter" hidden>
           <span id="filter-text"></span>
@@ -123,7 +123,7 @@
     <section class="box" aria-labelledby="h-bytes">
       <div class="box-header bar">
         <h2 id="h-bytes">Bytes</h2>
-        <ul class="legend" aria-label="Byte colours">
+        <ul class="legend" aria-label="Byte regions">
           <li><span class="swatch mono seg-ts" aria-hidden="true">00</span>Timestamp</li>
           <li><span class="swatch mono seg-hdr" aria-hidden="true">fd</span>Header</li>
           <li><span class="swatch mono seg-pay" aria-hidden="true">2a</span>Payload</li>

@@ -186,6 +186,8 @@ for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900]
     assert.deepEqual(a.violations, [], "frame selected");
     assert.ok(a.passes > 20, `axe ran ${a.passes} passing rules`);
     await page.getByRole("button", { name: "Next issue" }).click();
+    // Let the 120 ms button colour transitions finish, or axe samples a mid-fade colour.
+    await page.evaluate(() => Promise.all(document.getAnimations().map((x) => x.finished)));
     const b = await run();
     assert.deepEqual(b.violations, [], "CRC issue selected");
     assert.deepEqual(await cspViolations(page), [], "CSP violations");
@@ -461,3 +463,119 @@ test("with JavaScript off, a <noscript> message explains why nothing works", asy
   await page.close();
 });
 
+
+// ---------- design standard: contrast and consistency computed from the rendered page ----------
+const rgbOf = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
+const lumOf = (c) => rgbOf(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+  .reduce((acc, v, i) => acc + v * [0.2126, 0.7152, 0.0722][i], 0);
+const contrast = (a, b) => { const [x, y] = [lumOf(a), lumOf(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+// The colour actually painted behind an element: the nearest ancestor-or-self with an opaque background.
+const bgFn = `(el) => { for (let n = el; n; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor;
+  if (!/rgba\\(.*, 0\\)$/.test(c) && c !== "transparent") return c; } return "rgb(255, 255, 255)"; }`;
+
+for (const scheme of ["light", "dark"]) {
+  test(`timeline density bars and their legend glyph reach 3:1 (${scheme})`, async () => {
+    const page = await openPage({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
+    const r = await page.evaluate((src) => {
+      const bg = eval(src);
+      const bin = document.querySelector("#timeline .bin");
+      const glyph = document.querySelector(".g-density");
+      return { bin: getComputedStyle(bin).fill, binBg: bg(document.getElementById("timeline")),
+        glyph: getComputedStyle(glyph).fill, glyphBg: bg(glyph.closest("li")) };
+    }, bgFn);
+    const bars = contrast(r.bin, r.binBg);
+    const legend = contrast(r.glyph, r.glyphBg);
+    console.log(`# timeline ${scheme}: bars ${bars.toFixed(2)}:1, legend glyph ${legend.toFixed(2)}:1`);
+    assert.ok(bars >= 3, `density bars ${bars.toFixed(2)}:1 against the timeline (${scheme})`);
+    assert.ok(legend >= 3, `density legend glyph ${legend.toFixed(2)}:1 against the legend row (${scheme})`);
+    await page.close();
+  });
+
+  test(`hex byte regions differ by a non-colour mark with 3:1 contrast and a text name (${scheme})`, async () => {
+    const page = await openPage({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
+    await page.getByRole("button", { name: "Next issue" }).click();
+    const segs = ["seg-ts", "seg-hdr", "seg-pay", "seg-crc", "seg-sig"];
+    const r = await page.evaluate(([src, segs]) => {
+      const bg = eval(src);
+      const mark = (el) => { const cs = getComputedStyle(el);
+        return { style: cs.borderBottomStyle, width: cs.borderBottomWidth, color: cs.borderBottomColor, own: bg(el), behind: bg(el.parentElement) }; };
+      const legend = Object.fromEntries(segs.map((s) => [s, mark(document.querySelector(`.legend .swatch.${s}`))]));
+      const hex = Object.fromEntries(segs.filter((s) => document.querySelector(`#hex .b.${s}`)).map((s) => {
+        const first = document.querySelector(`#hex .b.${s}`);
+        const prev = first.previousElementSibling;
+        return [s, { ...mark(first), name: prev && prev.classList.contains("sr-only") ? prev.textContent : null }];
+      }));
+      return { legend, hex };
+    }, [bgFn, segs]);
+    // Each region has its own line pattern, so colour is not the only cue.
+    const patterns = segs.map((s) => `${r.legend[s].style} ${r.legend[s].width}`);
+    assert.equal(new Set(patterns).size, segs.length, `region marks must differ: ${patterns.join(" | ")}`);
+    for (const s of segs) {
+      const m = r.legend[s];
+      if (m.style === "none") continue;
+      for (const against of [m.own, m.behind]) {
+        const c = contrast(m.color, against);
+        assert.ok(c >= 3, `${s} mark ${c.toFixed(2)}:1 against ${against} (${scheme})`);
+      }
+    }
+    // The CRC frame shows timestamp, header, payload and CRC; their bytes carry the legend's marks and a name.
+    assert.deepEqual(Object.keys(r.hex), ["seg-ts", "seg-hdr", "seg-pay", "seg-crc"]);
+    for (const [s, m] of Object.entries(r.hex)) {
+      assert.equal(`${m.style} ${m.width}`, `${r.legend[s].style} ${r.legend[s].width}`, `${s} bytes match the legend`);
+      assert.ok(m.name && m.name.trim().length > 2, `${s}: first byte is preceded by a visually hidden region name`);
+      if (m.style !== "none") assert.ok(contrast(m.color, m.own) >= 3, `${s} mark against its byte tint (${scheme})`);
+    }
+    await page.close();
+  });
+}
+
+test("numeric and text column headers share one face", async () => {
+  const page = await openPage();
+  await page.getByRole("button", { name: "Next issue" }).click();
+  const r = await page.evaluate(() => ({
+    msg: [...document.querySelectorAll("#msg-table th")].map((th) => getComputedStyle(th).fontFamily),
+    list: [...document.querySelectorAll("#list-table th")].map((th) => getComputedStyle(th).fontFamily),
+    cell: getComputedStyle(document.querySelector("#msg-table td.num")).fontFamily,
+  }));
+  assert.equal(new Set(r.msg).size, 1, `messages headers: ${[...new Set(r.msg)].join(" | ")}`);
+  assert.equal(new Set(r.list).size, 1, `frames headers: ${[...new Set(r.list)].join(" | ")}`);
+  assert.equal(r.msg[0], r.list[0]);
+  assert.notEqual(r.cell, r.msg[0], "numeric cells keep the monospace face for alignment");
+  await page.close();
+});
+
+test("header source link, view toggles and primary button follow the shared components", async () => {
+  const page = await openPage();
+  const r = await page.evaluate(() => {
+    const repo = document.querySelector(".app-header a[href='https://github.com/anirudh763/mavframe']");
+    const prose = document.querySelector("#gap-assumptions a");
+    const cs = (el) => getComputedStyle(el);
+    const btn = document.getElementById("prev-issue");
+    return {
+      repoDeco: cs(repo).textDecorationLine, repoColor: cs(repo).color, linkColor: cs(prose).color,
+      toggles: ["view-frames", "view-issues"].map((id) => { const e = document.getElementById(id); return [cs(e).borderRadius, e.getBoundingClientRect().height]; }),
+      btn: [cs(btn).borderRadius, btn.getBoundingClientRect().height],
+    };
+  });
+  assert.match(r.repoDeco, /underline/, "Source on GitHub is underlined like other links");
+  assert.equal(r.repoColor, r.linkColor, "Source on GitHub uses the link colour");
+  for (const t of r.toggles) assert.deepEqual(t, r.btn, "All frames / Issues toggles have the button radius and height");
+  // Primary buttons change on hover (they had no hover state before).
+  const look = () => page.$eval("#load-sample", (e) => { const cs = getComputedStyle(e); return `${cs.backgroundColor} ${cs.filter}`; });
+  await page.mouse.move(0, 0);
+  const idle = await look();
+  await page.hover("#load-sample");
+  assert.notEqual(await look(), idle, "primary button hover state");
+  await page.close();
+});
+
+test("the root font size follows the browser's default text size", async () => {
+  const page = await browser.newPage();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Page.enable");
+  await cdp.send("Page.setFontSizes", { fontSizes: { standard: 20, fixed: 20 } });
+  await page.goto(base);
+  const px = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+  assert.ok(px > 15.5, `root font is ${px}px with a 20px browser default`);
+  await page.close();
+});
