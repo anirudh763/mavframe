@@ -153,34 +153,96 @@ test("packet analyzer (1440 px): list, field tree and bytes side by side; field 
   await page.close();
 });
 
-for (const [width, height] of [[1440, 900], [1024, 768]]) {
-  test(`packet analyzer at ${width}x${height}: after a row click the list, field tree and bytes are all inside the viewport`, async () => {
+// The analyzer shows the header fields and 8+ byte rows with no inner scrolling, measured with real boxes.
+test("packet analyzer at 1440x900: after a row click the tree shows all 8 header fields and the bytes pane 8+ rows, nothing scrolls", async () => {
+  const page = await openPage({ viewport: { width: 1440, height: 900 } });
+  for (const [query, nth] of [["#/frames", 3], ["#/frames", 0], ["#/frames?check=crc", 0]]) {
+    await page.goto(base + query);
+    await page.waitForSelector("#frame-table tbody tr a");
+    await page.locator("#frame-table tbody tr a").nth(nth).click();
+    await page.waitForFunction(() => /^#\/frames\/\d+/.test(location.hash) && document.querySelector("#hex .b"));
+    const r = await page.evaluate(() => {
+      const box = (el) => el.getBoundingClientRect();
+      const inside = (b, R) => b.top >= R.top - 0.5 && b.bottom <= R.bottom + 0.5 && b.left >= R.left - 0.5 && b.right <= R.right + 0.5;
+      const T = box(document.querySelector(".tree-col"));
+      const keys = ["stx", "len", "incompat", "compat", "seq", "sysid", "compid", "msgid"];
+      const hdr = keys.map((k) => document.querySelector(`#panel-header .fieldbtn[data-key="${k}"]`));
+      const hex = document.getElementById("hex");
+      const lh = parseFloat(getComputedStyle(hex).lineHeight);
+      const view = { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
+      const R = box(document.getElementById("frame-region"));
+      return {
+        analyzer: document.body.classList.contains("analyzer-mode"),
+        headerVisible: hdr.filter((b) => b && inside(box(b), T)).length,
+        hexRowsCapacity: Math.floor((hex.clientHeight - 8) / lh), hexRows: hex.querySelectorAll(".off").length,
+        hexInnerScroll: hex.scrollHeight > hex.clientHeight + 1, hexSideways: hex.scrollWidth > hex.clientWidth + 1,
+        allLinesShown: [...hex.querySelectorAll(".off")].every((o) => inside(box(o), box(hex))),
+        panesInView: [".tree-col", "#panel-bytes", "#frame-region", "#export-finding"].every((sel) => inside(box(document.querySelector(sel)), view)),
+        page: document.scrollingElement.scrollHeight, ih: innerHeight,
+        listRows: [...document.querySelectorAll("#frame-table tbody tr")].filter((t) => { const b = box(t); return b.top >= R.top - 0.5 && b.bottom <= R.bottom + 0.5; }).length,
+      };
+    });
+    const where = `${query} row ${nth}`;
+    assert.equal(r.analyzer, true, where);
+    assert.equal(r.headerVisible, 8, `${where}: header fields fully visible in the tree (${r.headerVisible}/8)`);
+    assert.ok(r.hexRowsCapacity >= 8, `${where}: bytes pane holds ${r.hexRowsCapacity} rows`);
+    assert.equal(r.hexInnerScroll, false, `${where}: no inner scroll for this frame's ${r.hexRows} rows`);
+    assert.equal(r.hexSideways, false, `${where}: hex rows with ASCII fit`);
+    assert.ok(r.allLinesShown, `${where}: every byte row inside the pane`);
+    assert.ok(r.panesInView, `${where}: list, tree, bytes and Export inside the viewport`);
+    assert.ok(r.page <= r.ih, `${where}: no page scrolling (${r.page})`);
+    assert.ok(r.listRows >= 3, `${where}: ${r.listRows} list rows visible`);
+    console.log(`# analyzer 1440x900 ${where}: header 8/8, bytes ${r.hexRows} rows (room for ${r.hexRowsCapacity}), ${r.listRows} list rows`);
+  }
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+for (const [width, height] of [[1024, 768], [1280, 720]]) {
+  test(`${width}x${height} uses the two-step route layout: Frames list, then a full Frame details screen`, async () => {
     const page = await openPage({ viewport: { width, height } });
     await page.goto(base + "#/frames");
     await page.waitForSelector("#frame-table tbody tr a");
-    await page.locator("#frame-table tbody tr a").nth(3).click();
-    await waitRoute(page, /^#\/frames\/3/);
-    await page.waitForSelector("#hex .b");
-    const r = await page.evaluate(() => {
-      const box = (s) => { const b = document.querySelector(s).getBoundingClientRect(); return { top: b.top, bottom: b.bottom, left: b.left, right: b.right, h: b.height }; };
-      return { list: box("#frame-region"), tree: box(".tree-col"), bytes: box("#panel-bytes"), exp: box("#export-finding"),
-        scroll: document.scrollingElement.scrollHeight, iw: innerWidth, ih: innerHeight,
-        rows: [...document.querySelectorAll("#frame-table tbody tr")].filter((t) => { const b = t.getBoundingClientRect(); const R = document.getElementById("frame-region").getBoundingClientRect(); return b.top >= R.top && b.bottom <= R.bottom; }).length };
+    assert.equal(await page.evaluate(() => document.body.classList.contains("analyzer-mode")), false, "no three-pane analyzer");
+    // The list's first columns (check, message, time, offset) are not clipped.
+    const cols = await page.evaluate(() => {
+      const R = document.getElementById("frame-region").getBoundingClientRect();
+      return [...document.querySelectorAll("#frame-table thead th")].slice(0, 4).map((th) => { const b = th.getBoundingClientRect(); return [th.textContent, b.left >= R.left && b.right <= R.right]; });
     });
-    assert.ok(r.scroll <= r.ih, `no page scrolling: ${r.scroll} > ${r.ih}`);
-    for (const k of ["list", "tree", "bytes", "exp"]) {
-      const b = r[k];
-      assert.ok(b.top >= 0 && b.bottom <= r.ih && b.left >= 0 && b.right <= r.iw, `${k} inside the viewport: ${JSON.stringify(b)}`);
-      assert.ok(b.h >= 40, `${k} is at least 40px tall (${Math.round(b.h)})`);
+    for (const [name, ok] of cols) assert.ok(ok, `${name} column visible at ${width}px`);
+    await page.getByRole("button", { name: "CRC failed", exact: true }).click();
+    await page.waitForFunction(() => /check=crc/.test(location.hash));
+    await page.locator("#frame-table tbody tr a").first().click();
+    await page.waitForFunction(() => document.title === "Frame details – Mavframe");
+    assert.equal(await focusedH1(page), "ATTITUDE at offset 13,866");
+    assert.equal(await page.isVisible("#back-link"), true);
+    assert.equal(await page.isVisible("#frame-region"), false, "the list is a separate step");
+    for (const tab of ["Decoded", "Bytes", "Header"]) {
+      await page.getByRole("tab", { name: tab }).click();
+      const r = await page.evaluate(() => {
+        const panel = [...document.querySelectorAll('[role="tabpanel"]')].find((p) => !p.hidden);
+        const hex = document.getElementById("hex");
+        const cut = [...panel.querySelectorAll("*")].filter((e) => e.offsetParent !== null && !e.closest(".table-wrap, .hex") && e.getBoundingClientRect().right > innerWidth + 0.5).length;
+        return { cut, crcIn: document.getElementById("crc-compare").getBoundingClientRect().right <= innerWidth, page: document.scrollingElement.scrollWidth <= innerWidth,
+          hexSideways: !panel.contains(hex) || hex.scrollWidth <= hex.clientWidth + 1,
+          tablesFit: [...panel.querySelectorAll(".table-wrap")].every((w) => w.scrollWidth <= w.clientWidth + 1) };
+      });
+      assert.equal(r.cut, 0, `${tab}: nothing clipped at the right edge`);
+      assert.ok(r.crcIn && r.page, `${tab}: CRC row and page fit ${width}px`);
+      assert.ok(r.hexSideways, `${tab}: hex rows fit without sideways scrolling`);
+      assert.ok(r.tablesFit, `${tab}: field tables fit without sideways scrolling`);
     }
-    assert.ok(r.rows >= 4, `${r.rows} list rows visible`);
-    console.log(`# analyzer ${width}x${height}: ${r.rows} rows visible, tree ${Math.round(r.tree.h)}px, bytes ${Math.round(r.bytes.h)}px, page ${r.scroll}px tall`);
+    assert.match(await page.textContent("#panel-header"), /CRC\s*0xA4FE received, 0x66D8 computed/);
+    await page.click("#back-link");
+    await page.waitForFunction(() => document.title === "Frames – Mavframe");
+    assert.deepEqual(page.errors, []);
     await page.close();
   });
 }
 
 test("route, title and H1 agree: Frames on wide screens, Frame details on narrow ones", async () => {
-  for (const [width, title, h1, crumbs] of [[1440, "Frames – Mavframe", "Frames", ["Mavframe", "Frames"]], [375, "Frame details – Mavframe", "ATTITUDE at offset 13,866", ["Mavframe", "Frames", "Frame details"]]]) {
+  const details = ["Frame details – Mavframe", "ATTITUDE at offset 13,866", ["Mavframe", "Frames", "Frame details"]];
+  for (const [width, title, h1, crumbs] of [[1440, "Frames – Mavframe", "Frames", ["Mavframe", "Frames"]], [1024, ...details], [375, ...details]]) {
     const page = await openPage({ viewport: { width, height: 900 } });
     const href = await rowHref(page, 13866);
     await page.goto(base + href);

@@ -9,7 +9,9 @@ import { buildFinding } from "./finding.js";
 
 const SAMPLE = { url: "sample/sample-flight.tlog", name: "sample-flight.tlog" };
 const PAGE = 100;
-const WIDE = window.matchMedia("(min-width: 1000px)");
+// The three-pane analyzer needs room for the list, the header fields (8 rows of 44px targets) and
+// 8+ rows of bytes at once; below this size Frames -> Frame details is a two-step route.
+const WIDE = window.matchMedia("(min-width: 1200px) and (min-height: 880px)");
 const CHECKS = ["all", "issues", "crc", "unsupported", "valid"];
 const TABS = ["decoded", "bytes", "header"];
 const $ = (id) => document.getElementById(id);
@@ -680,8 +682,9 @@ function renderDetail(route) {
     if (g.trimmed) kids.push(el("p", { class: "note", text: `The sender trimmed trailing zero bytes (MAVLink v2): ${a.plen} of ${g.length} payload bytes were sent; the rest read as zero.` }));
     return kids;
   };
-  const tree = (ids) => el("div", { class: "tree" }, ...a.groups.filter((g) => ids.includes(g.id)).flatMap(groupTable));
-  $("panel-header").replaceChildren(tree(["ts", "header", "crc", "sig"]));
+  const tree = (ids) => el("div", { class: "tree" }, ...ids.map((id) => a.groups.find((g) => g.id === id)).filter(Boolean).flatMap(groupTable));
+  // The analyzer reads header fields first, as a packet analyzer's tree does; the tlog record follows.
+  $("panel-header").replaceChildren(tree(wide ? ["header", "ts", "crc", "sig"] : ["ts", "header", "crc", "sig"]));
   $("panel-decoded").replaceChildren(tree(["payload"]));
 
   // Tabs on narrow screens; all three panes at once on wide screens.

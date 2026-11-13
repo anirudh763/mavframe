@@ -126,9 +126,9 @@ details and packet bytes panes):
   signature fields next to the hex bytes. Selecting a field highlights its
   bytes; clicking a byte selects its field; with the bytes focused, Left and
   Right move between fields. The CRC from the capture and the CRC computed by
-  `mavframe_crc16()` are shown side by side. On screens 1000 px and wider the
+  `mavframe_crc16()` are shown side by side. On windows at least 1200 x 880 px the
   list, field tree and bytes fill the window side by side without page
-  scrolling; on narrow screens it is its own screen with Decoded, Bytes and
+  scrolling; on smaller windows it is its own screen with Decoded, Bytes and
   Header tabs.
 - **Export finding (JSON)**: one row as a portable JSON file with the mavframe
   version, file name, size and SHA-256, offsets, CRC wire vs computed and the
@@ -306,7 +306,7 @@ Neither parser reported a frame that was not written to the stream.
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 17 passed (differential, command line, version)
 node --test tests/web/test_wasm.mjs   # 18 passed (WebAssembly build, see Browser inspector)
-node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs   # 46 passed, 1 skipped (screenshots): 5 + 23 + 18 (Chromium, Playwright, axe-core)
+node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs   # 47 passed, 1 skipped (screenshots): 5 + 24 + 18 (Chromium, Playwright, axe-core)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and

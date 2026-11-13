@@ -46,13 +46,17 @@ The inspector is a Wireshark-style packet analyzer over the real parser output, 
 Selection is linked both ways: a field highlights its bytes, a click on a byte selects its field, and with the bytes focused
 Left/Right move between fields (the keyboard path). The CRC wire and computed values sit side by side above the panes.
 
-- At >= 1000px the Frames screen fills the viewport height (no page scrolling): a compact header (H1 with counts, the
-  assumption line, timeline, filters) above two panes. The frame list scrolls on the left; the right column holds the
-  CRC comparison, the field tree and the bytes, each scrolling inside its own pane, plus Export. `#/frames/<index>`
-  selects a row on this screen: title, H1 and breadcrumb stay "Frames" and there is no Back link. Selecting a row
-  keeps keyboard focus in the list; arrow keys move the selection. Tested at 1440x900 and 1024x768.
+- Where the analyzer is usable, `(min-width: 1200px) and (min-height: 880px)`, the Frames screen fills the viewport
+  height with no page scrolling. The left column holds the heading, counts, assumption line, timeline, filters and the
+  scrolling frame list. The right column, at full height, holds CRC wire vs computed, the field tree (header fields
+  first: all 8 fit without inner scrolling) and the bytes (room for 8 rows), then Export. `#/frames/<index>` selects a
+  row on this screen: title, H1 and breadcrumb stay "Frames", with no Back link. Selecting a row keeps keyboard focus in
+  the list, and arrow keys move the selection. The threshold was measured: the 8 header rows (44px targets), 8 hex rows,
+  the CRC row and Export need about 820px below the location header.
+- Below that size (for example 1024x768 or 1280x720) Frames and Frame details are two steps, as on narrow screens:
+  `#/frames/<index>` is the Frame details screen with Back, title "Frame details" and Decoded / Bytes / Header tabs.
 - The hex pane shows 16 bytes per row and falls back to 8 or 4 when a row (with its ASCII column) does not fit.
-- Below 1000px the same URL is its own **Frame details** screen with **Decoded / Bytes / Header** tabs (ARIA tabs, arrow keys).
+- Elsewhere the same URL is its own **Frame details** screen with **Decoded / Bytes / Header** tabs (ARIA tabs, arrow keys).
 
 Reference: Wireshark User's Guide, "Working With Captured Packets"
 (https://www.wireshark.org/docs/wsug_html_chunked/ChapterWork.html): "Clicking on an item in the tree will highlight the
@@ -106,7 +110,7 @@ Every data screen has loading ("Parsing the capture…"), empty ("No capture is 
   `color-not-only` (every status has text), line 53 navigation (predictable Back, deep linking).
 - anti-slop `skills/antislop-ui/SKILL.md` lines 20-25 (no default gradients) and 39-43 (shadow only as an elevation marker:
   this UI is flat); `skills/antislop-layoutmobile/SKILL.md` lines 41-42 (design the 600-1024px band: Menu sheet below
-  1000px, analyzer tested at 1024x768).
+  1000px, two-step route layout tested at 1024x768 and 1280x720).
 - awesome-design-md: token front matter plus prose order for this file; `design-md/linear.app/DESIGN.md` line 264 (mono
   reserved for code) informs the mono-only-for-hex rule. axe-core: 0 violations on every screen, light and dark,
 at 1280 and 320 px.
