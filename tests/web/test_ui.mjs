@@ -398,3 +398,35 @@ test("duplicate and backward sequence numbers are labelled, not shown as missing
   }
   await page.close();
 });
+
+test("focus stays on a control after activating rows, message filters and the pager", async () => {
+  const page = await openPage();
+  const active = () => page.evaluate(() => {
+    const a = document.activeElement;
+    return { tag: a.tagName, id: a.id, cls: a.className, msgid: a.dataset.msgid || null, current: a.getAttribute("aria-current") };
+  });
+  // Enter on a frame row.
+  await page.locator("#list-table .rowbtn").nth(2).focus();
+  await page.keyboard.press("Enter");
+  let a = await active();
+  assert.notEqual(a.tag, "BODY", "after Enter on a row");
+  assert.equal(a.current, "true");
+  // Enter and Space on a message filter button.
+  for (const key of ["Enter", "Space"]) {
+    await page.locator("#msg-table").getByRole("button", { name: "ATTITUDE" }).focus();
+    await page.keyboard.press(key);
+    a = await active();
+    assert.notEqual(a.tag, "BODY", `after ${key} on a message filter`);
+    assert.equal(a.msgid, "30");
+  }
+  // Next page until the last page: the button becomes disabled, focus moves to Previous page.
+  await page.locator("#msg-table").getByRole("button", { name: "ATTITUDE" }).press("Enter"); // clear the filter if set
+  if (!(await page.isHidden("#filter"))) await page.getByRole("button", { name: "Clear filter" }).click();
+  await page.locator("#next-page").focus();
+  while (!(await page.isDisabled("#next-page"))) await page.keyboard.press("Enter");
+  a = await active();
+  assert.notEqual(a.tag, "BODY", "after Next page reached the last page");
+  assert.equal(a.id, "prev-page");
+  assert.match(await page.textContent("#page-info"), new RegExp(`of ${truth.frames.toLocaleString("en-US")} frames`));
+  await page.close();
+});

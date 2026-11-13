@@ -180,6 +180,8 @@ export async function analyze(bytes, opts = {}) {
   let nestedCrc = 0;
   let failedStart = -1;
   let failedEnd = -1;
+  let unsupStart = -1;
+  let unsupEnd = -1;
   let framesWithTs = 0;
   let lastTs = NaN;
 
@@ -232,6 +234,21 @@ export async function analyze(bytes, opts = {}) {
           continue;
         }
         if (kind === "crc") { failedStart = e.off; failedEnd = e.off + e.flen; }
+        // A message id outside the common dialect (e.g. ArduPilot's MEMINFO):
+        // the parser checks only its header and rescans the rest, so a 0xFD
+        // in its payload shows up as a bad-flags candidate. Within the frame
+        // length the header announces, such rejects are not separate issues.
+        // (Only rejects: a CRC failure there may be a real frame.)
+        if (kind === "reject" && e.off > unsupStart && e.off < unsupEnd) { insideFailedFrame++; continue; }
+        if (kind === "unsupported") {
+          unsupStart = e.off;
+          unsupEnd = e.off + 12 + e.len + (e.iflags & 1 ? 13 : 0);
+          // Frames of other dialects use up sequence numbers too: when this
+          // one is exactly the next number, count it as received so the next
+          // common-dialect frame is not reported as a gap.
+          const k = (e.sysid << 8) | e.compid;
+          if (lastSeq[k] >= 0 && ((e.seq - lastSeq[k]) & 0xff) === 1) lastSeq[k] = e.seq;
+        }
         if (!tlog) { commit(it); continue; }
         // Events arrive in stream order, so the next frame starts after
         // e.off: older pending rejections can no longer sit in its timestamp.
@@ -256,6 +273,7 @@ export async function analyze(bytes, opts = {}) {
       }
       pending.length = 0;
       failedStart = failedEnd = -1; // a valid frame ends any damaged span
+      unsupStart = unsupEnd = -1;
       const t = tsBefore(e.off);
       if (!Number.isNaN(t)) { framesWithTs++; lastTs = t; }
       const key = (e.sysid << 8) | e.compid;
@@ -348,7 +366,7 @@ export async function analyze(bytes, opts = {}) {
     duplicates: counts.duplicate,
     reorders: counts.reorder,
     timestampArtifacts,
-    insideFailedFrame, // candidates inside a CRC-failed frame (not listed), including...
+    insideFailedFrame, // candidates inside a CRC-failed frame, or rejects inside an unsupported one (not listed), including...
     nestedCrc, // ...those whose own CRC also failed (counted by the parser as bad_crc)
     skippedBytes: stats.dropped_bytes - (tlog ? 8 * framesWithTs : 0),
     firstTs,

@@ -203,7 +203,7 @@ function renderMessages() {
   const tbody = $("msg-table").querySelector("tbody");
   const rows = r.messages.map((m) => {
     const pressed = state.msg === m.msgid;
-    const btn = el("button", { type: "button", class: "rowbtn msgbtn", "aria-pressed": pressed ? "true" : "false",
+    const btn = el("button", { type: "button", class: "rowbtn msgbtn", "aria-pressed": pressed ? "true" : "false", "data-msgid": m.msgid,
       onclick: () => setFilter(pressed ? null : m.msgid) }, ...breakAtUnderscores(m.name || `id ${m.msgid}`));
     const hz = (v) => (Number.isNaN(v) ? "n/a" : v.toFixed(2));
     const many = m.sources.length > 1;
@@ -393,7 +393,7 @@ function renderList() {
     const isSel = state.sel && state.sel.t === (state.view === "frames" ? "f" : "i") && state.sel.i === idx;
     const label = state.view === "frames" ? "Select frame " : "Select issue ";
     const btn = el("button", { type: "button", class: "rowbtn", "data-idx": idx, "aria-current": isSel ? "true" : null,
-      onclick: () => select({ t: state.view === "frames" ? "f" : "i", i: idx }), onkeydown: onRowKey },
+      onclick: () => select({ t: state.view === "frames" ? "f" : "i", i: idx }, { focus: true }), onkeydown: onRowKey },
     el("span", { class: "sr-only", text: label }), String(idx + 1));
     let cells;
     if (state.view === "frames") {
@@ -465,6 +465,10 @@ function setFilter(msgid) {
   renderMessages();
   renderList();
   writeHash();
+  // The table was re-rendered; keep keyboard focus on the button just used.
+  const again = document.querySelector(`#msg-table .msgbtn[data-msgid="${msgid === null ? state.lastFilter : msgid}"]`);
+  if (again && document.activeElement === document.body) again.focus();
+  if (msgid !== null) state.lastFilter = msgid;
 }
 
 function select(sel, opts = {}) {
@@ -702,8 +706,14 @@ function wire() {
   $("view-frames").addEventListener("click", () => setView("frames"));
   $("view-issues").addEventListener("click", () => setView("issues"));
   $("clear-filter").addEventListener("click", () => setFilter(null));
-  $("prev-page").addEventListener("click", () => { state.page--; renderList(); });
-  $("next-page").addEventListener("click", () => { state.page++; renderList(); });
+  // When the pressed button becomes disabled (first or last page), focus moves to the other one.
+  const page = (step, self, other) => {
+    state.page += step;
+    renderList();
+    if ($(self).disabled) $(other).focus();
+  };
+  $("prev-page").addEventListener("click", () => page(-1, "prev-page", "next-page"));
+  $("next-page").addEventListener("click", () => page(1, "next-page", "prev-page"));
   $("prev-issue").addEventListener("click", () => stepIssue(-1));
   $("next-issue").addEventListener("click", () => stepIssue(1));
   $("timeline").addEventListener("click", onTimelineClick);
