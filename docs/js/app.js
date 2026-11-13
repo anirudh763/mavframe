@@ -58,15 +58,15 @@ function relTime(ts) {
 const timeMode = () => state.result && !Number.isNaN(state.result.firstTs) && state.result.endTs > state.result.firstTs;
 
 // ---------- loading ----------
-function setBusy(busy) {
+function setBusy(busy, cancellable = false) {
   state.busy = busy;
   for (const id of ["load-sample", "file", "format"]) $(id).disabled = busy;
-  $("cancel").hidden = !busy;
+  $("cancel").hidden = !(busy && cancellable);
 }
 
 async function run(bytes, name, isSample) {
   if (state.busy) return;
-  setBusy(true);
+  setBusy(true, true);
   const progress = $("progress");
   const ptext = $("progress-text");
   progress.hidden = ptext.hidden = false;
@@ -119,14 +119,24 @@ async function run(bytes, name, isSample) {
   }
 }
 
+// The status and the disabled controls change before the first await, so
+// the previous result's status is never shown while a new load is running.
 async function loadSample() {
+  if (state.busy) return;
+  setBusy(true);
+  setStatus(`Loading ${SAMPLE.name}…`);
+  let bytes;
   try {
     const resp = await fetch(SAMPLE.url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    await run(new Uint8Array(await resp.arrayBuffer()), SAMPLE.name, true);
+    bytes = new Uint8Array(await resp.arrayBuffer());
   } catch (err) {
     setStatus(`Could not load the sample: ${err.message}`, true);
+    return;
+  } finally {
+    setBusy(false);
   }
+  await run(bytes, SAMPLE.name, true);
 }
 
 async function openFile(file) {
@@ -141,6 +151,8 @@ async function openFile(file) {
       "or use the mavframe-dump command-line tool.", true);
     return;
   }
+  if (state.busy) return;
+  setBusy(true);
   setStatus(`Reading ${file.name}…`);
   let bytes;
   try {
@@ -148,6 +160,8 @@ async function openFile(file) {
   } catch (err) {
     setStatus(`Could not read ${file.name}: ${err.message}`, true);
     return;
+  } finally {
+    setBusy(false);
   }
   await run(bytes, file.name, false);
 }
@@ -660,7 +674,12 @@ function applyHash(hash) {
 
 // ---------- wiring ----------
 function wire() {
-  $("load-sample").addEventListener("click", () => { state.pendingHash = null; loadSample(); });
+  $("load-sample").addEventListener("click", async () => {
+    state.pendingHash = null;
+    await loadSample();
+    // The button is disabled while loading, which drops keyboard focus; give it back.
+    if (document.activeElement === document.body) $("load-sample").focus();
+  });
   $("cancel").addEventListener("click", () => state.abort?.abort());
   $("file").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
   $("format").addEventListener("change", () => { if (state.bytes) run(state.bytes, state.name, state.isSample); });

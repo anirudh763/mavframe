@@ -84,7 +84,12 @@ const metric = (page, id) => page.$eval(`#${id}`, (dd) => dd.firstChild.textCont
 
 test("Load sample flight shows the generator's exact counts", async () => {
   const page = await openPage();
+  // While the sample downloads, the old result's status must not stay up
+  // (tests and screen-reader users would read it as the new result).
+  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
   await page.getByRole("button", { name: "Load sample flight" }).click();
+  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
+  assert.equal(await page.isDisabled("#load-sample"), true);
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await metric(page, "m-crc"), String(truth.crc_errors));
@@ -228,7 +233,9 @@ test("keyboard only: load the sample, step to an issue, move through rows", asyn
   const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
   assert.notEqual(outline, "none", "focus indicator visible");
   await page.keyboard.press("Enter");
+  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
   await waitParsed(page, "sample-flight.tlog");
+  await page.waitForFunction(() => document.activeElement.id === "load-sample");
   await tabTo("#next-issue");
   await page.keyboard.press("Enter");
   assert.match(await page.textContent("#decoded .lead"), /CRC error at offset/);
