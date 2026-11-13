@@ -1,0 +1,1093 @@
+{
+ "bytes": 66883,
+ "crc_error_offsets": [
+  13866,
+  34797,
+  52547
+ ],
+ "crc_errors": 3,
+ "decoded": [
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 8
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 1123
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 2238
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 3353
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 4468
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 5583
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 6698
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 7813
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 8928
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 10043
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 11158
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 12273
+  },
+  {
+   "fields": {
+    "autopilot": 12,
+    "base_mode": 129,
+    "custom_mode": 67371008,
+    "mavlink_version": 3,
+    "system_status": 4,
+    "type": 2
+   },
+   "msgid": 0,
+   "name": "HEARTBEAT",
+   "offset": 13388
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1225,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 435,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16295
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 14532
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1250,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 442,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16287
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 15647
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1236,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 450,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16279
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 16762
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1223,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 423,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16271
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 17877
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1245,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 425,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16263
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 18992
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1236,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 413,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16255
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 20107
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1249,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 437,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16247
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 21222
+  },
+  {
+   "fields": {
+    "battery_remaining": 98,
+    "current_battery": 1228,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 411,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16239
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 22337
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1234,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 417,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16231
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 23477
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1237,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 441,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16223
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 24592
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1230,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 426,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16215
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 25707
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1210,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 435,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16207
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 26822
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1221,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 432,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16199
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 27937
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1222,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 439,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16191
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 29052
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1233,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 447,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16183
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 30167
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1248,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 412,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16175
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 31282
+  },
+  {
+   "fields": {
+    "battery_remaining": 97,
+    "current_battery": 1243,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 434,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16167
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 32397
+  },
+  {
+   "fields": {
+    "battery_remaining": 96,
+    "current_battery": 1234,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 436,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16159
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 33512
+  },
+  {
+   "fields": {
+    "battery_remaining": 96,
+    "current_battery": 1227,
+    "drop_rate_comm": 0,
+    "errors_comm": 0,
+    "errors_count1": 0,
+    "errors_count2": 0,
+    "errors_count3": 0,
+    "errors_count4": 0,
+    "load": 434,
+    "onboard_control_sensors_enabled": 2161711,
+    "onboard_control_sensors_enabled_extended": 0,
+    "onboard_control_sensors_health": 2161711,
+    "onboard_control_sensors_health_extended": 0,
+    "onboard_control_sensors_present": 2161711,
+    "onboard_control_sensors_present_extended": 0,
+    "voltage_battery": 16151
+   },
+   "msgid": 1,
+   "name": "SYS_STATUS",
+   "offset": 34627
+  },
+  {
+   "fields": {
+    "time_boot_ms": 47006,
+    "time_unix_usec": "1767225632006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 35793
+  },
+  {
+   "fields": {
+    "time_boot_ms": 48006,
+    "time_unix_usec": "1767225633006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 36908
+  },
+  {
+   "fields": {
+    "time_boot_ms": 49006,
+    "time_unix_usec": "1767225634006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 38023
+  },
+  {
+   "fields": {
+    "time_boot_ms": 50006,
+    "time_unix_usec": "1767225635006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 39138
+  },
+  {
+   "fields": {
+    "time_boot_ms": 51006,
+    "time_unix_usec": "1767225636006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 40253
+  },
+  {
+   "fields": {
+    "time_boot_ms": 52006,
+    "time_unix_usec": "1767225637006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 41368
+  },
+  {
+   "fields": {
+    "time_boot_ms": 53006,
+    "time_unix_usec": "1767225638006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 42483
+  },
+  {
+   "fields": {
+    "time_boot_ms": 54006,
+    "time_unix_usec": "1767225639006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 43598
+  },
+  {
+   "fields": {
+    "time_boot_ms": 55006,
+    "time_unix_usec": "1767225640006000"
+   },
+   "msgid": 2,
+   "name": "SYSTEM_TIME",
+   "offset": 44713
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 35650,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473970246,
+    "lon": 85467204,
+    "satellites_visible": 14,
+    "time_usec": "1767225641009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 45808
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 509,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473970261,
+    "lon": 85465613,
+    "satellites_visible": 14,
+    "time_usec": "1767225642009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 46922
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 1369,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473970437,
+    "lon": 85464043,
+    "satellites_visible": 14,
+    "time_usec": "1767225643009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 48037
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 2228,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473970770,
+    "lon": 85462530,
+    "satellites_visible": 14,
+    "time_usec": "1767225644009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 49152
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 3088,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473971252,
+    "lon": 85461107,
+    "satellites_visible": 14,
+    "time_usec": "1767225645009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 50267
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 3947,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473971872,
+    "lon": 85459807,
+    "satellites_visible": 14,
+    "time_usec": "1767225646009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 51382
+  },
+  {
+   "fields": {
+    "alt": 538000,
+    "alt_ellipsoid": 0,
+    "cog": 4806,
+    "eph": 78,
+    "epv": 112,
+    "fix_type": 3,
+    "h_acc": 0,
+    "hdg_acc": 0,
+    "lat": 473972617,
+    "lon": 85458658,
+    "satellites_visible": 14,
+    "time_usec": "1767225647009000",
+    "v_acc": 0,
+    "vel": 1200,
+    "vel_acc": 0,
+    "yaw": 0
+   },
+   "msgid": 24,
+   "name": "GPS_RAW_INT",
+   "offset": 52497
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 56,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 53662
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 65,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 54777
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 73,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 55892
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 82,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 57008
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 91,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 58124
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 99,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 59240
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 108,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 60356
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 116,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 61472
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 125,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 62588
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 134,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 63704
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 142,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 64820
+  },
+  {
+   "fields": {
+    "airspeed": 12.0,
+    "alt": 50.0,
+    "climb": 0.0,
+    "groundspeed": 12.0,
+    "heading": 151,
+    "throttle": 55
+   },
+   "msgid": 74,
+   "name": "VFR_HUD",
+   "offset": 65936
+  }
+ ],
+ "duplicates": 0,
+ "file": "docs/sample/sample-flight.tlog",
+ "first_ts_us": 1767225600000121,
+ "frames": 1496,
+ "gap_list": [
+  {
+   "compid": 1,
+   "missing": 1,
+   "offset": 13914,
+   "sysid": 1
+  },
+  {
+   "compid": 1,
+   "missing": 1,
+   "offset": 34845,
+   "sysid": 1
+  },
+  {
+   "compid": 1,
+   "missing": 1,
+   "offset": 44743,
+   "sysid": 1
+  },
+  {
+   "compid": 1,
+   "missing": 1,
+   "offset": 52586,
+   "sysid": 1
+  }
+ ],
+ "gaps": 4,
+ "last_ts_us": 1767225659918601,
+ "messages": {
+  "0": {
+   "count": 120,
+   "crc_errors": 0,
+   "name": "HEARTBEAT"
+  },
+  "1": {
+   "count": 60,
+   "crc_errors": 0,
+   "name": "SYS_STATUS"
+  },
+  "2": {
+   "count": 60,
+   "crc_errors": 0,
+   "name": "SYSTEM_TIME"
+  },
+  "24": {
+   "count": 119,
+   "crc_errors": 0,
+   "name": "GPS_RAW_INT"
+  },
+  "30": {
+   "count": 599,
+   "crc_errors": 1,
+   "name": "ATTITUDE"
+  },
+  "33": {
+   "count": 299,
+   "crc_errors": 1,
+   "name": "GLOBAL_POSITION_INT"
+  },
+  "74": {
+   "count": 239,
+   "crc_errors": 1,
+   "name": "VFR_HUD"
+  }
+ },
+ "missing_frames": 4,
+ "pymavlink_tlog_reader": {
+  "bad_data_pieces": 3,
+  "valid_v2_frames": 1496
+ },
+ "records": 1500,
+ "reorders": 0,
+ "skipped_bytes": 160,
+ "v1_records": 1
+}

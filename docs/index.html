@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<title>mavframe inspector</title>
+<meta name="description" content="Inspect MAVLink v2 telemetry captures (.tlog or raw bytes) in the browser with the mavframe C parser compiled to WebAssembly. Files never leave your machine.">
+<link rel="stylesheet" href="css/ui.css">
+<link rel="stylesheet" href="css/inspector.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to inspector</a>
+<header class="app-header">
+  <h1 class="name">mavframe inspector</h1>
+  <span class="muted tagline">MAVLink v2 capture viewer. The parser is the project's C code compiled to WebAssembly.</span>
+  <nav aria-label="Project"><a href="https://github.com/anirudh763/mavframe">Source on GitHub</a></nav>
+</header>
+
+<main id="main">
+  <section class="toolbar" aria-label="Capture">
+    <button type="button" id="load-sample" class="btn primary">Load sample flight</button>
+    <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
+    <label for="file" class="btn">Open capture file</label>
+    <span class="field">
+      <label for="format">Format</label>
+      <select id="format">
+        <option value="auto">Auto-detect</option>
+        <option value="tlog">.tlog (timestamp + frame)</option>
+        <option value="raw">Raw byte stream</option>
+      </select>
+    </span>
+    <span id="source" class="source"></span>
+  </section>
+
+  <div class="status-row">
+    <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
+    <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
+    <span id="progress-text" class="muted mono" hidden></span>
+    <button type="button" class="btn" id="cancel" hidden>Cancel</button>
+  </div>
+
+  <section aria-labelledby="h-summary">
+    <h2 id="h-summary" class="sr-only">Summary</h2>
+    <dl class="metrics" id="metrics">
+      <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
+      <div><dt>CRC errors</dt><dd id="m-crc">–</dd></div>
+      <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
+      <div><dt>Sequence gaps</dt><dd id="m-gaps" aria-describedby="gap-assumptions">–</dd></div>
+      <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
+      <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
+      <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
+    </dl>
+    <p id="gap-assumptions" class="muted small">Gap estimates assume one fully observed channel per sender and in-order arrival. Routing, filtering or merged links can create apparent loss. <a href="https://mavlink.io/en/guide/packet_loss.html" target="_blank" rel="noopener">MAVLink packet-loss assumptions (opens in a new tab)</a>.</p>
+  </section>
+
+  <section class="box timeline-box" aria-labelledby="h-timeline">
+    <div class="box-header bar">
+      <h2 id="h-timeline">Timeline</h2>
+      <ul class="legend" aria-label="Timeline markers">
+        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC error</li>
+        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
+        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Other: unsupported id, bad flags, duplicate or out-of-order seq</li>
+        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-density" x="1" y="4" width="10" height="7"/></svg>Frames per interval</li>
+      </ul>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="prev-issue">Previous issue</button>
+      <button type="button" class="btn" id="next-issue">Next issue</button>
+    </div>
+    <div class="timeline-wrap">
+      <svg id="timeline" role="img" aria-labelledby="timeline-desc" preserveAspectRatio="none"></svg>
+      <p id="timeline-desc" class="sr-only">No capture loaded.</p>
+      <p id="timeline-cap" class="muted small cap-note" hidden></p>
+      <div class="axis mono"><span id="axis-start"></span><span id="axis-unit" class="muted"></span><span id="axis-end"></span></div>
+    </div>
+  </section>
+
+  <div class="panes">
+    <section class="box" aria-labelledby="h-messages">
+      <div class="box-header bar"><h2 id="h-messages">Messages</h2><span class="muted small">Select a message to filter the frame list</span><span class="muted small scroll-hint">Scroll the table sideways for senders</span></div>
+      <div class="table-wrap">
+        <table id="msg-table" class="dense">
+          <thead><tr>
+            <th scope="col" class="num">ID</th><th scope="col">Message</th>
+            <th scope="col" class="num">Count</th><th scope="col" class="num">Rate (Hz)</th><th scope="col" class="num">CRC errors</th>
+            <th scope="col">Sources (sys:comp)</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="box" aria-labelledby="h-frames">
+      <div class="box-header bar">
+        <h2 id="h-frames">Frames</h2>
+        <div class="chips" role="group" aria-label="List">
+          <button type="button" class="chip" id="view-frames" aria-pressed="true">All frames</button>
+          <button type="button" class="chip" id="view-issues" aria-pressed="false">Issues</button>
+        </div>
+        <span id="filter" class="filter" hidden>
+          <span id="filter-text"></span>
+          <button type="button" class="btn small-btn" id="clear-filter">Clear filter</button>
+        </span>
+      </div>
+      <div class="table-wrap list-wrap">
+        <table id="list-table" class="dense">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" class="btn" id="prev-page">Previous page</button>
+        <span id="page-info" class="muted"></span>
+        <button type="button" class="btn" id="next-page">Next page</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="panes detail">
+    <section class="box" aria-labelledby="h-bytes">
+      <div class="box-header bar">
+        <h2 id="h-bytes">Bytes</h2>
+        <ul class="legend" aria-label="Byte colours">
+          <li><span class="swatch mono seg-ts" aria-hidden="true">00</span>Timestamp</li>
+          <li><span class="swatch mono seg-hdr" aria-hidden="true">fd</span>Header</li>
+          <li><span class="swatch mono seg-pay" aria-hidden="true">2a</span>Payload</li>
+          <li><span class="swatch mono seg-crc" aria-hidden="true">c3</span>CRC</li>
+          <li><span class="swatch mono seg-sig" aria-hidden="true">01</span>Signature</li>
+        </ul>
+      </div>
+      <pre id="hex" class="hex" tabindex="0" aria-label="Bytes of the selected frame">Select a frame.</pre>
+    </section>
+    <section class="box" aria-labelledby="h-decoded">
+      <div class="box-header bar"><h2 id="h-decoded">Decoded</h2></div>
+      <div id="decoded" class="decoded"><p class="muted pad">Select a frame or an issue.</p></div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer muted">
+  <p>Files are read in this browser tab and never uploaded. Frames are found and CRC-checked by
+  <code>src/mavframe.c</code> compiled to WebAssembly; payload fields of HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE,
+  GLOBAL_POSITION_INT and VFR_HUD are decoded from the official MAVLink XML definitions. MAVLink v1 frames are not parsed
+  and count as skipped bytes. Message signatures are shown as present but are not verified. Captures up to 256 MB.
+  Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
+</footer>
+</body>
+</html>

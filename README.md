@@ -8,7 +8,7 @@ code is written: no heap allocation, a fixed 280-byte buffer, input accepted
 one byte at a time, and recovery after corrupted bytes. It exists to show that
 a frame parser can be small enough to read in one sitting and still be checked
 against a reference implementation (pymavlink), fuzzed, and measured. It only
-finds and checks frames. It does not decode message fields and it makes no
+finds and checks frames. The library does not decode message fields and it makes no
 decisions about what a message means or whether it should be accepted.
 
 ## Quick start
@@ -65,6 +65,108 @@ The CRC_EXTRA table (`src/mavframe_crc_extra_common.h`, 210 messages of the
 ```sh
 python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
 ```
+
+## Browser inspector
+
+The page is not published yet; it will be served from `docs/` once GitHub
+Pages is enabled. Locally: `python3 -m http.server -d docs` and open
+http://localhost:8000/.
+
+![mavframe inspector showing the synthetic sample flight with a CRC error selected](docs/screenshots/inspector.png)
+
+`docs/` is a static page that runs this parser in the browser: `src/mavframe.c`,
+unchanged, compiled to a 4,086-byte WebAssembly module together with a small
+glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
+microsecond timestamp before each frame) or a raw byte stream, or press
+**Load sample flight**. Files are read in the tab and never uploaded.
+
+The page shows a message table (id, name, count, rate from .tlog timestamps,
+CRC errors, and the sending system:component with its own rate when more than
+one sends the message), a timeline with CRC errors and sequence
+findings marked, frame and issue lists that can be filtered by message, and the
+selected frame's bytes and decoded fields. Payload fields are decoded for
+HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD,
+from an excerpt of the official MAVLink XML (`tools/mavlink-xml/`, pinned
+commit, SHA-256 checked); `tools/gen_web_defs.py` fails unless field order,
+types, length and CRC_EXTRA equal pymavlink's.
+
+What the counts mean:
+
+- **CRC errors**: a candidate frame (a 0xFD start byte, a plausible header and
+  enough bytes) whose checksum fails. On a noisy link many of these are random
+  bytes that only looked like a header, not damaged real frames. Candidates the
+  parser finds inside a frame that already failed its CRC (including a fake
+  header there whose own CRC also fails) are part of that one error, not
+  separate issues; in .tlog mode, neither are candidates that start inside a
+  record's 8 timestamp bytes.
+- **Unsupported messages**: a header whose message id is not in the common
+  dialect. Its checksum cannot be checked, so it is skipped and not called
+  corrupt.
+- **Sequence gaps**: per system and component, a forward jump of 2 to 128 in the
+  8-bit sequence number. "~N frames missing" assumes frames arrive in order; a
+  late frame looks the same, so it is an estimate. It also assumes one fully
+  observed channel per sender: routing, filtering or merging links can create
+  apparent loss. See the [MAVLink packet-loss assumptions](https://mavlink.io/en/guide/packet_loss.html).
+  A repeated number is a
+  duplicate, a step back is out of order (or, beyond 16 back, a likely sender
+  restart), and 255 to 0 is in order. None of these are counted as CRC errors.
+- **Signed frames**: "signature present; not verified". Signatures are carried,
+  not checked (that needs the link key).
+- MAVLink v1 frames and other bytes count as skipped bytes. In .tlog mode, a
+  0xFD byte inside a timestamp that the parser briefly takes for a frame start
+  is not reported as a link error (20 in the sample). A test with 2,000 records,
+  200 of them corrupted and many timestamps containing 0xFD, reports exactly
+  200 CRC errors and no other rejects; so does the reviewer's independent file
+  (`tests/web/gen_critic_tlog.py`, seed 9001: 20,000 frames from 3 senders,
+  200 corrupted, one of them hiding a fake frame whose CRC also fails).
+
+Captures up to 256 MB are accepted; larger files get a message instead. Parsing
+runs in 512 kB chunks with a progress bar and a Cancel button. Details are kept
+for the first 4,000,000 frames and 100,000 issues; the counts cover everything.
+
+The sample is synthetic and labelled so on the page: 60 seconds of made-up
+telemetry for a quadrotor (computed by the script, not taken from a simulator or
+a real flight), packed by pymavlink
+(`tools/gen_sample_tlog.py`), with three frames altered after packing, one frame
+never written and one MAVLink v1 record. The page reports what the generator
+wrote: 1,496 valid frames, 3 CRC errors, 4 sequence gaps (~4 frames missing: the
+dropped frame and the three corrupted ones), 0 duplicates, 0 out of order,
+160 skipped bytes. pymavlink's own .tlog reader also finds 1,496 valid frames.
+
+```sh
+pip install ziglang==0.17.1
+sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
+cmake --build build                    # also builds build/glue_dump: the same glue, native
+node --test tests/web/test_wasm.mjs    # 17 tests
+node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
+```
+
+- The wasm and native builds of the same files give identical events (offset,
+  id, status, header fields, length) and counters on the sample, a corrupted
+  3,000-frame stream, signed frames and malformed input, fed in reads of 1, 2, 3,
+  7, 10, 13, 255 and 4,096 bytes and in one piece (43,812 events compared), and
+  with the stream split into two reads at every byte boundary of two test
+  streams (195 and 539 split points). CI rebuilds the wasm and fails if it
+  differs from the committed file.
+- Decoded fields of 51 sample frames equal pymavlink's values.
+- Sequence regression cases (one component): 10, 11 is in order; 10, 10, 11 is
+  one duplicate; 10, 9, 11 is one out-of-order frame; 255, 0 is in order; 10, 13
+  is one gap of ~2; 200, 150, 151 is one likely restart. The commit before this
+  fix reported 255 missing frames for the duplicate and out-of-order cases.
+- Browser tests: exact counts for the sample; keyboard-only use; no horizontal
+  scrolling at 320 and 375 px, at 200% page zoom and with 200% text size; empty
+  file, non-MAVLink file, oversized file, sample and wasm download failures;
+  Cancel; signed and unsupported frames; a 52 MB capture with the longest
+  main-thread block under 250 ms (126 ms in the last run here). axe-core 4.14
+  reports 0 violations in light and dark mode. These are automated checks; a
+  manual screen-reader check was not run.
+
+The page sets a Content-Security-Policy: only its own files load, no inline
+scripts or styles, and WebAssembly compilation is allowed (`'wasm-unsafe-eval'`).
+The browser tests fail on any policy violation.
+
+The page uses Atkinson Hyperlegible (SIL Open Font License 1.1, license text in
+`docs/css/OFL-Atkinson-Hyperlegible.txt`).
 
 ## Results
 
@@ -133,6 +235,7 @@ Neither parser reported a frame that was not written to the stream.
 ```sh
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 8 passed
+node --test tests/web/test_wasm.mjs   # 17 passed (WebAssembly build, see Browser inspector)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and
@@ -161,7 +264,18 @@ mkdir -p corpus
 ./build-fuzz/fuzz_parse -max_total_time=60 -max_len=2048 corpus fuzz/seeds fuzz/regressions
 ```
 
-Last run here: 857,424 executions in 61 seconds, 0 crashes
+`fuzz/fuzz_wasm_glue.c` drives the browser glue (built natively) with the same
+kind of input and checks that every recorded event lies inside the input, matches
+the header bytes at its offset, and that no event is lost:
+
+```sh
+cmake --build build-fuzz --target fuzz_wasm_glue
+./build-fuzz/fuzz_wasm_glue -max_total_time=60 -max_len=2048 corpus-glue fuzz/seeds fuzz/regressions
+```
+
+Last run of the glue target here: 1,113,923 executions in 61 seconds, 0 crashes.
+
+Last run of `fuzz_parse` here: 857,424 executions in 61 seconds, 0 crashes
 (clang 18.1.3, `-fsanitize=fuzzer,address,undefined`).
 
 **Bug found by the fuzzer and fixed.** The first 60-second run stopped after
@@ -287,6 +401,9 @@ arm-none-eabi-size sz.o
   x86-64 Linux with gcc and clang.
 - No command validation, filtering or anomaly detection of any kind. This is a
   frame parser.
+- The browser inspector decodes payload fields for six messages only; other
+  messages show raw bytes. Rates need .tlog timestamps. Captures over 256 MB
+  are refused. Sequence-gap counts are estimates (see Browser inspector).
 
 ## How this was built
 

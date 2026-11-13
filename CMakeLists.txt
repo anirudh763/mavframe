@@ -32,9 +32,19 @@ add_executable(test_mavframe tests/test_mavframe.c)
 target_link_libraries(test_mavframe PRIVATE mavframe)
 add_test(NAME unit COMMAND test_mavframe)
 
+# Native build of the WebAssembly glue, compared with the wasm build by tests/web/test_wasm.mjs.
+add_executable(glue_dump tests/web/glue_dump.c web/wasm/mavframe_wasm.c src/mavframe.c)
+target_include_directories(glue_dump PRIVATE include)
+
 if(MAVFRAME_FUZZ)
   add_executable(fuzz_parse fuzz/fuzz_parse.c src/mavframe.c)
   target_include_directories(fuzz_parse PRIVATE include)
   target_compile_options(fuzz_parse PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
   target_link_options(fuzz_parse PRIVATE -fsanitize=fuzzer,address,undefined)
+
+  # The browser glue (web/wasm/), built natively so the sanitizers see it.
+  add_executable(fuzz_wasm_glue fuzz/fuzz_wasm_glue.c web/wasm/mavframe_wasm.c src/mavframe.c)
+  target_include_directories(fuzz_wasm_glue PRIVATE include)
+  target_compile_options(fuzz_wasm_glue PRIVATE -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
+  target_link_options(fuzz_wasm_glue PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
