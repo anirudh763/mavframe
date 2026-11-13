@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Build (warnings are errors)
         run: |
-          CC=${{ matrix.cc }} cmake -S . -B build
+          CC=${{ matrix.cc }} cmake -S . -B build -DMAVFRAME_WERROR=ON
           cmake --build build
       - name: C unit tests
         run: ctest --test-dir build --output-on-failure
@@ -30,6 +30,13 @@ jobs:
         run: python3 tools/gen_crc_extra.py | diff - src/mavframe_crc_extra_common.h
       - name: Differential tests against pymavlink
         run: python3 -m pytest tests -v
+
+  install-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Default build (MAVFRAME_WERROR off), install to a temp prefix, build and run a consumer
+        run: CC=clang sh tests/install/check_install.sh
 
   sanitizers:
     runs-on: ubuntu-latest
@@ -42,7 +49,7 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Build with ASan + UBSan
         run: |
-          CC=gcc cmake -S . -B build-asan -DMAVFRAME_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          CC=gcc cmake -S . -B build-asan -DMAVFRAME_SANITIZE=ON -DMAVFRAME_WERROR=ON -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-asan
       - name: C unit tests under ASan + UBSan
         run: ctest --test-dir build-asan --output-on-failure
@@ -62,7 +69,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev || true
       - name: Build the libFuzzer target
         run: |
-          CC=clang cmake -S . -B build-fuzz -DMAVFRAME_FUZZ=ON -DCMAKE_BUILD_TYPE=Debug
+          CC=clang cmake -S . -B build-fuzz -DMAVFRAME_FUZZ=ON -DMAVFRAME_WERROR=ON -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-fuzz --target fuzz_parse
       - name: Fuzz for 60 seconds
         run: |
@@ -87,7 +94,7 @@ jobs:
       - name: Install Python tools (pymavlink, zig)
         run: pip install -r requirements-dev.txt ziglang==0.17.1
       - name: Build the native parser (compared against the wasm build)
-        run: cmake -S . -B build && cmake --build build
+        run: cmake -S . -B build -DMAVFRAME_WERROR=ON && cmake --build build
       - name: Committed docs/mavframe.wasm matches a fresh build
         run: |
           sh tools/build_wasm.sh "$RUNNER_TEMP/mavframe.wasm"

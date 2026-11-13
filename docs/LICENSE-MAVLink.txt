@@ -1,0 +1,31 @@
+MAVLink message definitions: licence notice
+
+tools/mavlink-xml/common-excerpt.xml is an excerpt of common.xml, standard.xml
+and minimal.xml from https://github.com/mavlink/mavlink at commit
+12c898d88ce18d24e8caf6338596e98c5005bc97
+(message_definitions/v1.0). docs/js/msgdefs.js is generated from that excerpt.
+
+MAVLink states that "the message definition XML files and the generated
+C-language version of MAVLink are made available under the MIT-licence"
+(https://mavlink.io/en/#license). The MAVLink repository's COPYING file at that
+commit gives the MIT permission notice below. The MAVLink generator itself
+(LGPL-3.0) is not included in this repository; pymavlink is used only as a
+test and build-time dependency.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the generated software (the "Generated Software"), to deal
+in the Generated Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Generated Software, and to permit persons to whom the Generated
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Generated Software.
+
+THE GENERATED SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE GENERATED SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE GENERATED SOFTWARE.

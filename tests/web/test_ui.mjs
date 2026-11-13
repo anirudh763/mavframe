@@ -29,7 +29,7 @@ const CASES = fs.mkdtempSync(path.join(os.tmpdir(), "mavframe-ui-cases-"));
 }
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm",
-  ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png" };
+  ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png", ".svg": "image/svg+xml" };
 let server;
 let base;
 let browser;
@@ -174,9 +174,9 @@ test("issues, filters, decoding and the URL state work", async () => {
   await page2.close();
 });
 
-for (const scheme of ["light", "dark"]) {
-  test(`axe-core: 0 violations (${scheme})`, async () => {
-    const page = await openPage({ colorScheme: scheme });
+for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900], ["light", 375, 800], ["dark", 375, 800]]) {
+  test(`axe-core: 0 violations (${scheme}, ${width} px)`, async () => {
+    const page = await openPage({ colorScheme: scheme, viewport: { width, height } });
     await injectAxe(page);
     const run = () => page.evaluate(async () => {
       const r = await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] });
@@ -189,7 +189,7 @@ for (const scheme of ["light", "dark"]) {
     const b = await run();
     assert.deepEqual(b.violations, [], "CRC issue selected");
     assert.deepEqual(await cspViolations(page), [], "CSP violations");
-    console.log(`# axe ${scheme}: ${a.violations.length} + ${b.violations.length} violations, ${a.passes} and ${b.passes} rules passed`);
+    console.log(`# axe ${scheme} ${width}px: ${a.violations.length} + ${b.violations.length} violations, ${a.passes} and ${b.passes} rules passed`);
     await page.close();
   });
 }
@@ -430,3 +430,34 @@ test("focus stays on a control after activating rows, message filters and the pa
   assert.match(await page.textContent("#page-info"), new RegExp(`of ${truth.frames.toLocaleString("en-US")} frames`));
   await page.close();
 });
+
+test("with JavaScript off, a <noscript> message explains why nothing works", async () => {
+  for (const [scheme, width] of [["light", 1280], ["dark", 375]]) {
+    const page = await browser.newPage({ javaScriptEnabled: false, colorScheme: scheme, viewport: { width, height: 800 } });
+    await page.goto(base);
+    const note = page.locator("#noscript");
+    assert.ok(await note.isVisible(), `noscript message visible (${scheme}, ${width} px)`);
+    const box = await note.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width, `message fits in ${width} px`);
+    // Text contrast of the message against its own background, computed from the page's styles.
+    const ratio = await page.evaluate(() => {
+      const el = document.getElementById("noscript");
+      const rgb = (c) => c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+      const lum = ([r, g, b]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+        .reduce((acc, v, i) => acc + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const cs = getComputedStyle(el);
+      const [a, b] = [lum(rgb(cs.color)), lum(rgb(cs.backgroundColor))].sort((x, y) => y - x);
+      return (a + 0.05) / (b + 0.05);
+    });
+    assert.ok(ratio >= 4.5, `noscript text contrast ${ratio.toFixed(2)}:1 (${scheme})`);
+    // axe-core cannot run here (page timers are off with JavaScript disabled), so contrast is checked directly.
+    console.log(`# noscript ${scheme} ${width}px: contrast ${ratio.toFixed(2)}:1`);
+    await page.close();
+  }
+  // With JavaScript on, the message is not rendered.
+  const page = await openPage();
+  assert.equal(await page.locator("#noscript").count(), 0);
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
