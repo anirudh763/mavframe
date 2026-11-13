@@ -38,6 +38,13 @@
 extern "C" {
 #endif
 
+/* Library version. CMakeLists.txt (project VERSION) and the top entry of
+ * CHANGELOG.md must say the same; tests/test_version.py checks this. */
+#define MAVFRAME_VERSION_MAJOR 0
+#define MAVFRAME_VERSION_MINOR 1
+#define MAVFRAME_VERSION_PATCH 0
+#define MAVFRAME_VERSION_STRING "0.1.0"
+
 #define MAVFRAME_STX 0xFD
 #define MAVFRAME_HEADER_LEN 10
 #define MAVFRAME_MAX_PAYLOAD 255

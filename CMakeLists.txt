@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(mavframe C)
+project(mavframe VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -8,21 +8,35 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 set(CMAKE_C_FLAGS_RELEASE "-O2")
+include(GNUInstallDirs)
 
 option(MAVFRAME_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(MAVFRAME_FUZZ "Build the libFuzzer target (needs clang)" OFF)
+option(MAVFRAME_WERROR "Treat compiler warnings as errors (CI turns this on)" OFF)
 
-add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+add_compile_options(-Wall -Wextra -Wpedantic)
+if(MAVFRAME_WERROR)
+  add_compile_options(-Werror)
+endif()
 if(MAVFRAME_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
 add_library(mavframe STATIC src/mavframe.c)
-target_include_directories(mavframe PUBLIC include)
+target_include_directories(mavframe PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 add_executable(mavframe-dump tools/mavframe-dump.c)
 target_link_libraries(mavframe-dump PRIVATE mavframe)
+
+# cmake --install build --prefix <dir>: lib/libmavframe.a, include/mavframe.h, bin/mavframe-dump.
+install(TARGETS mavframe mavframe-dump
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES include/mavframe.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 add_executable(mavframe-bench bench/bench.c)
 target_link_libraries(mavframe-bench PRIVATE mavframe)

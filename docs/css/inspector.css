@@ -143,3 +143,6 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
   #msg-table th, #msg-table td { padding: 3px 5px; white-space: normal; }
   #msg-table .msgbtn { padding: 0 2px; }
 }
+
+/* Shown only when JavaScript is off. */
+.noscript { margin: 12px 0; padding: 8px 12px; border: 1px solid var(--border); border-left: 4px solid var(--warn); border-radius: var(--radius); background: var(--warn-subtle); color: var(--fg); max-width: 80ch; }

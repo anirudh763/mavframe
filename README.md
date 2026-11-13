@@ -2,26 +2,38 @@
 
 [![CI](https://github.com/anirudh763/mavframe/actions/workflows/ci.yml/badge.svg)](https://github.com/anirudh763/mavframe/actions)
 
+A link-quality view of a .tlog: CRC errors and sequence gaps per sender; not a
+flight plotter.
+
 mavframe is a dependency-free C99 parser for MAVLink v2 telemetry frames, the
-protocol drones use to talk to ground stations. It is written the way firmware
-code is written: no heap allocation, a fixed 280-byte buffer, input accepted
-one byte at a time, and recovery after corrupted bytes. It exists to show that
+protocol drones use to talk to ground stations. It is written in a firmware
+style (no heap allocation, a fixed 280-byte buffer, input accepted one byte at
+a time, recovery after corrupted bytes), but it has only been compiled for a
+microcontroller, never run on one (see Limitations). It exists to show that
 a frame parser can be small enough to read in one sitting and still be checked
 against a reference implementation (pymavlink), fuzzed, and measured. It only
 finds and checks frames. The library does not decode message fields and it makes no
 decisions about what a message means or whether it should be accepted.
 
+The bundled sample flight is synthetic, and no capture from a real radio link
+has been tested yet.
+
+Status: beta (0.1.0), maintained by one student, best effort. Tested on x86-64
+Linux with gcc and clang. Security reports and the supported scope:
+[SECURITY.md](SECURITY.md).
+
 ## Quick start
 
 ```sh
 cmake -S . -B build && cmake --build build        # library, mavframe-dump, tests, benchmark
+                                                  # (add -DMAVFRAME_WERROR=ON to make warnings errors, as CI does)
 ctest --test-dir build --output-on-failure        # C unit tests
 
 pip install -r requirements-dev.txt               # pymavlink + pytest, tests only
 python3 -m pytest tests -v                        # differential tests against pymavlink
 
 python3 bench/gen_stream.py clean 3 sample.bin    # three random valid frames
-./build/mavframe-dump < sample.bin
+./build/mavframe-dump sample.bin                  # or: ./build/mavframe-dump < sample.bin
 ```
 
 Output of the last command (frames on stdout, counters on stderr):
@@ -32,6 +44,25 @@ off=0 msgid=82 sysid=7 compid=140 seq=125 len=39 signed=0 payload=a96089bc4b0d13
 off=51 msgid=77 sysid=88 compid=142 seq=79 len=10 signed=0 payload=00000300030000009662
 off=73 msgid=32 sysid=170 compid=116 seq=148 len=28 signed=0 payload=0100000099d2d8c81c818448f5ff83c8848d7dc89fd70dc98b8fe3c8
 ```
+
+`mavframe-dump [FILE]` reads stdin when FILE is missing or `-`;
+`--help` and `--version` print to stdout and exit 0. A file that cannot be
+opened or read gives `mavframe-dump: cannot open <file>: <reason>` and exit
+status 1; bad arguments give 2. The input is raw bytes, so a .tlog's 8-byte
+timestamps count as dropped bytes (the browser inspector reads .tlog records).
+
+To install the library, header and tool:
+
+```sh
+cmake --install build --prefix "$HOME/.local"     # lib/libmavframe.a, include/mavframe.h, bin/mavframe-dump
+cc -std=c99 app.c -I"$HOME/.local/include" -L"$HOME/.local/lib" -lmavframe
+```
+
+CI does this with clang into a temporary prefix and runs
+`tests/install/consumer.c` against the installed files
+(`sh tests/install/check_install.sh`). `MAVFRAME_VERSION_STRING` and the
+`MAVFRAME_VERSION_MAJOR/MINOR/PATCH` macros in `mavframe.h` give the version
+(0.1.0; see `CHANGELOG.md`).
 
 Using the library:
 
@@ -142,7 +173,7 @@ pip install ziglang==0.17.1
 sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
 cmake --build build                    # also builds build/glue_dump: the same glue, native
 node --test tests/web/test_wasm.mjs    # 18 tests
-node --test tests/web/test_ui.mjs      # 14 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
+node --test tests/web/test_ui.mjs      # 17 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
 ```
 
 - The wasm and native builds of the same files give identical events (offset,
@@ -161,9 +192,10 @@ node --test tests/web/test_ui.mjs      # 14 tests in Chromium (Playwright) + axe
   scrolling at 320 and 375 px, at 200% page zoom and with 200% text size; empty
   file, non-MAVLink file, oversized file, sample and wasm download failures;
   Cancel; signed and unsupported frames; a 52 MB capture with the longest
-  main-thread block under 250 ms (126 ms in the last run here). axe-core 4.14
-  reports 0 violations in light and dark mode. These are automated checks; a
-  manual screen-reader check was not run.
+  main-thread block under 250 ms (126 ms in the last run here); with
+  JavaScript off, a `<noscript>` message says why nothing works. axe-core 4.14
+  reports 0 violations in light and dark mode at 1280 and 375 px. These are
+  automated checks; a manual screen-reader check was not run.
 
 The page sets a Content-Security-Policy: only its own files load, no inline
 scripts or styles, and WebAssembly compilation is allowed (`'wasm-unsafe-eval'`).
@@ -238,7 +270,7 @@ Neither parser reported a frame that was not written to the stream.
 
 ```sh
 ./build/test_mavframe          # prints "967 checks, 0 failures"
-python3 -m pytest tests -v     # 8 passed
+python3 -m pytest tests -v     # 17 passed (differential, command line, version)
 node --test tests/web/test_wasm.mjs   # 18 passed (WebAssembly build, see Browser inspector)
 ```
 
@@ -400,7 +432,8 @@ arm-none-eabi-size sz.o
   (14.4 vs 272.4 MB/s above).
 - The counters are 32-bit and wrap.
 - The corruption model in the tests is synthetic (independent damage per
-  frame at a 30% rate). It was not tested on a capture from a real radio link.
+  frame at a 30% rate), and so is the sample flight. No capture from a real
+  radio link has been tested yet.
 - Compiled for Cortex-M3 but never run on a microcontroller. Tested only on
   x86-64 Linux with gcc and clang.
 - No command validation, filtering or anomaly detection of any kind. This is a
@@ -415,4 +448,5 @@ Built with AI assistance (Claude). Every number above comes from the commands sh
 
 ## License
 
-MIT, see `LICENSE`.
+MIT, see `LICENSE`. Security reports: `SECURITY.md`. Contributing:
+`CONTRIBUTING.md`.
