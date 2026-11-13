@@ -102,7 +102,10 @@ What the counts mean:
   corrupt.
 - **Sequence gaps**: per system and component, a forward jump of 2 to 128 in the
   8-bit sequence number. "~N frames missing" assumes frames arrive in order; a
-  late frame looks the same, so it is an estimate. A repeated number is a
+  late frame looks the same, so it is an estimate. It also assumes one fully
+  observed channel per sender: routing, filtering or merging links can create
+  apparent loss. See the [MAVLink packet-loss assumptions](https://mavlink.io/en/guide/packet_loss.html).
+  A repeated number is a
   duplicate, a step back is out of order (or, beyond 16 back, a likely sender
   restart), and 255 to 0 is in order. None of these are counted as CRC errors.
 - **Signed frames**: "signature present; not verified". Signatures are carried,

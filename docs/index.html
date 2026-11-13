@@ -47,11 +47,12 @@
       <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
       <div><dt>CRC errors</dt><dd id="m-crc">–</dd></div>
       <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
-      <div><dt>Sequence gaps</dt><dd id="m-gaps">–</dd></div>
+      <div><dt>Sequence gaps</dt><dd id="m-gaps" aria-describedby="gap-assumptions">–</dd></div>
       <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
       <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
       <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
     </dl>
+    <p id="gap-assumptions" class="muted small">Gap estimates assume one fully observed channel per sender and in-order arrival. Routing, filtering or merged links can create apparent loss. <a href="https://mavlink.io/en/guide/packet_loss.html">MAVLink packet-loss assumptions</a>.</p>
   </section>
 
   <section class="box timeline-box" aria-labelledby="h-timeline">
