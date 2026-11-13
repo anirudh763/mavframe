@@ -110,4 +110,4 @@ jobs:
         run: |
           npm install --no-save --no-package-lock playwright@1.63.0 axe-core@4.14.0
           npx playwright install --with-deps chromium
-          node --test tests/web/test_ui.mjs
+          node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs

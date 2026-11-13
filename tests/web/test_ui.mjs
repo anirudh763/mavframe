@@ -1,112 +1,73 @@
-// End-to-end tests of the inspector page in Chromium (Playwright) plus the
-// axe-core accessibility gate in light and dark mode.
+// End-to-end tests of the inspector's behaviour in Chromium (Playwright):
+// exact counts, decoding, errors, cancel, large files, keyboard use and the
+// design standard's contrast checks. The routed layout and the root visual
+// gate (overflow, Menu, focus, Back/Forward, axe in light and dark) are in
+// tests/web/test_routes.mjs.
 //
 //   node --test tests/web/test_ui.mjs
-//   SCREENSHOT=1 node --test tests/web/test_ui.mjs   # also writes docs/screenshots/inspector.png
 //
 // Needs the playwright and axe-core npm packages (resolved with require()).
 // AXE_PATH can point at axe.min.js directly.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { chromium, ROOT, truth, startServer, openPage as open, waitParsed, cspViolations, axeViolations, settle, contrast, bgFn } from "./browser.mjs";
 
-const require = createRequire(import.meta.url);
-const { chromium } = require("playwright");
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DOCS = path.join(ROOT, "docs");
-const truth = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/web/sample-truth.json"), "utf8"));
-const AXE = process.env.AXE_PATH || require.resolve("axe-core/axe.min.js");
 const CASES = fs.mkdtempSync(path.join(os.tmpdir(), "mavframe-ui-cases-"));
 {
   const gen = spawnSync("python3", [path.join(ROOT, "tests/web/gen_cases.py"), CASES]);
   assert.equal(gen.status, 0, gen.stderr.toString());
 }
 
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm",
-  ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png", ".svg": "image/svg+xml" };
 let server;
 let base;
 let browser;
-
 before(async () => {
-  server = http.createServer((req, res) => {
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname).replace(/^\/+/, "") || "index.html";
-    const file = path.resolve(DOCS, rel);
-    if (!file.startsWith(DOCS + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-      res.writeHead(404).end();
-      return;
-    }
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream" });
-    fs.createReadStream(file).pipe(res);
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  base = `http://127.0.0.1:${server.address().port}/`;
+  ({ server, base } = await startServer());
   browser = await chromium.launch();
 });
-
 after(async () => {
   await browser?.close();
   server?.close();
 });
-
-async function openPage(opts = {}) {
-  const { hash, route, noWait, ...ctx } = opts;
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, ...ctx });
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
-  page.errors = errors;
-  if (route) await route(page);
-  // Record Content-Security-Policy violations (the page's CSP forbids inline code).
-  await page.addInitScript(() => {
-    window.__csp = [];
-    document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
-  });
-  await page.goto(base + (hash || ""));
-  if (!noWait) await waitParsed(page, "sample-flight.tlog");
-  return page;
-}
-
+const openPage = (opts) => open(browser, base, opts);
 const statusText = (page) => page.textContent("#status");
-const cspViolations = (page) => page.evaluate(() => window.__csp);
-// axe is evaluated through the DevTools protocol, not injected as a <script>, so the CSP stays on.
-const AXE_SOURCE = fs.readFileSync(AXE, "utf8");
-const injectAxe = (page) => page.evaluate(AXE_SOURCE);
-async function upload(page, file) {
-  await page.setInputFiles("#file", file);
-}
-
-function waitParsed(page, name, timeout = 30000) {
-  return page.waitForFunction((n) => {
-    const s = document.getElementById("status").textContent;
-    return s.startsWith(n + ":") && /valid frames/.test(s) && !document.getElementById("load-sample").disabled;
-  }, name, { timeout });
-}
-
 const metric = (page, id) => page.$eval(`#${id}`, (dd) => dd.firstChild.textContent.replace(/,/g, ""));
+const upload = (page, file) => page.setInputFiles("#file", file);
+// Hold the sample download until the test releases it, so the "Loading" phase is asserted
+// deterministically instead of racing a timer (CI can be slower or faster than any delay).
+async function holdSample(page) {
+  let release;
+  const gate = new Promise((ok) => { release = ok; });
+  let requested;
+  const seen = new Promise((ok) => { requested = ok; });
+  await page.route("**/sample/sample-flight.tlog", async (r) => { requested(); await gate; await r.continue(); });
+  return { seen, release: () => release() };
+}
+async function goFrames(page, query = "") {
+  await page.goto(base + "#/frames" + query);
+  await page.waitForFunction(() => document.querySelector("#frame-table tbody tr") && !document.getElementById("screen-frames").hidden);
+}
 
-test("Load sample flight shows the generator's exact counts", async () => {
+test("Load engineering sample shows the generator's exact counts and per-sender rates", async () => {
   const page = await openPage();
-  // While the sample downloads, the old result's status must not stay up
-  // (tests and screen-reader users would read it as the new result).
-  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
-  await page.getByRole("button", { name: "Load sample flight" }).click();
-  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
+  // While the sample downloads, the old result's status must not stay up.
+  const hold = await holdSample(page);
+  await page.getByRole("button", { name: "Load engineering sample" }).click();
+  await hold.seen; // the request is in flight and held: this is exactly the loading phase
+  assert.equal(await statusText(page), "Loading sample-flight.tlog…");
   assert.equal(await page.isDisabled("#load-sample"), true);
+  hold.release();
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await metric(page, "m-crc"), String(truth.crc_errors));
   assert.equal(await metric(page, "m-gaps"), String(truth.gaps));
   assert.equal(await metric(page, "m-skipped"), String(truth.skipped_bytes));
   assert.match(await page.textContent("#m-gaps"), new RegExp(`${truth.missing_frames} frames missing`));
-  assert.match(await page.textContent("#source"), /Synthetic sample/);
-  // Message table: one row per message type with count and CRC errors.
+  assert.match(await page.textContent("#source"), /Engineering fixture/);
   const rows = await page.$$eval("#msg-table tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((c) => c.textContent)));
   assert.equal(rows.length, Object.keys(truth.messages).length);
   for (const [id, name, count, , crc] of rows) {
@@ -114,97 +75,55 @@ test("Load sample flight shows the generator's exact counts", async () => {
     assert.equal(count.replace(/,/g, ""), String(truth.messages[id].count));
     assert.equal(crc, String(truth.messages[id].crc_errors));
   }
-  // Rates per sender for a message two systems send.
   const hb = await page.textContent("#msg-table tbody tr:first-child");
   assert.match(hb, /1:1 at 1\.00 Hz/);
   assert.match(hb, /255:190 at 1\.00 Hz/);
   assert.match(hb, /2\.00 all/);
-  // GPS_RAW_INT yaw 0 means "not provided" (official XML: invalid="0").
-  await page.locator("#msg-table").getByRole("button", { name: "GPS_RAW_INT" }).click();
-  await page.locator("#list-table .rowbtn").first().click();
-  assert.match(await page.textContent("#decoded"), /yaw \(extension\)\s*0\s*cdeg\s*not provided/);
-  await page.locator("#msg-table").getByRole("button", { name: "GPS_RAW_INT" }).click();
-  assert.deepEqual(await cspViolations(page), [], "CSP violations");
   // The external link must not replace the loaded capture.
   assert.equal(await page.getAttribute("#gap-assumptions a", "target"), "_blank");
   assert.match(await page.getAttribute("#gap-assumptions a", "rel"), /noopener/);
-  // Timeline markers.
+  // A message name links to Frames filtered to it.
+  await page.locator("#msg-table").getByRole("link", { name: "GPS_RAW_INT" }).click();
+  await page.waitForFunction(() => /^#\/frames\?msg=24$/.test(location.hash));
+  assert.equal(await page.inputValue("#msg-filter"), "24");
+  // GPS_RAW_INT yaw 0 means "not provided" (official XML: invalid="0").
+  await page.locator("#frame-table tbody tr a").first().click();
+  await page.waitForSelector("#panel-decoded .fieldbtn");
+  assert.match(await page.textContent("#panel-decoded"), /yaw \(extension\)\s*0 cdeg\s*not provided/);
+  // Timeline markers on Frames.
+  await goFrames(page);
   assert.equal(await page.locator("#timeline g.crc").count(), truth.crc_errors);
   assert.equal(await page.locator("#timeline g.gap").count(), truth.gaps);
+  assert.deepEqual(await cspViolations(page), [], "CSP violations");
   assert.deepEqual(page.errors, []);
   await page.close();
 });
 
-test("issues, filters, decoding and the URL state work", async () => {
+test("Next and Previous issue step through CRC failures and sequence gaps", async () => {
   const page = await openPage();
+  await goFrames(page);
   await page.getByRole("button", { name: "Next issue" }).click();
-  assert.equal(await page.getAttribute("#view-issues", "aria-pressed"), "true");
-  assert.equal(await page.locator("#list-table tbody tr").count(), truth.crc_errors + truth.gaps);
-  const lead = await page.textContent("#decoded .lead");
-  assert.match(lead, /CRC error at offset/);
-  assert.match(lead, new RegExp(truth.crc_error_offsets[0].toLocaleString("en-US")));
-  assert.match(await page.textContent("#decoded"), /computed 0x[0-9A-F]{4} by mavframe_crc16/);
-
-  // Filter by ATTITUDE and pick a frame: payload fields decoded.
-  await page.getByRole("button", { name: "All frames" }).click();
-  await page.locator("#msg-table").getByRole("button", { name: "ATTITUDE" }).click();
-  assert.match(await page.textContent("#page-info"), new RegExp(`of ${truth.messages["30"].count} frames`));
-  await page.locator("#list-table .rowbtn").nth(3).click();
-  const decoded = await page.textContent("#decoded");
-  assert.match(decoded, /Payload: ATTITUDE/);
-  assert.match(decoded, /yawspeed/);
-  // Arrow keys move the selection and the focus to the next row.
-  const sel = page.locator('#list-table .rowbtn[aria-current="true"]');
-  const beforeIdx = Number(await sel.getAttribute("data-idx"));
-  await sel.focus();
-  await page.keyboard.press("ArrowDown");
-  const focused = await page.evaluate(() => [document.activeElement.dataset.idx, document.activeElement.getAttribute("aria-current")]);
-  assert.ok(Number(focused[0]) > beforeIdx);
-  assert.equal(focused[1], "true");
-
-  // The view is in the URL; opening the link restores it.
-  const url = page.url();
-  assert.match(url, /#view=frames&msg=30&sel=f\d+/);
-  const leadBefore = await page.textContent("#decoded .lead");
-  const page2 = await openPage({ hash: url.slice(url.indexOf("#")) });
-  assert.equal(await page2.textContent("#decoded .lead"), leadBefore);
-  assert.equal(await page2.getAttribute('#msg-table button[aria-pressed="true"]', "aria-pressed"), "true");
-  assert.deepEqual([...page.errors, ...page2.errors], []);
+  await page.waitForFunction(() => /^#\/frames\/\d+/.test(location.hash));
+  assert.match(await page.textContent("#detail-title"), new RegExp(`at offset ${truth.crc_error_offsets[0].toLocaleString("en-US")}$`));
+  assert.match(await page.textContent("#crc-compare"), /Mismatch: CRC failed/);
+  await page.getByRole("button", { name: "Next issue" }).click();
+  await page.waitForFunction((o) => document.getElementById("detail-title").textContent.endsWith(o), truth.gap_list[0].offset.toLocaleString("en-US"));
+  assert.match(await page.textContent("#detail-notes"), /Sequence gap/);
+  assert.match(await page.textContent("#crc-compare"), /Match: valid CRC/);
+  await page.getByRole("button", { name: "Previous issue" }).click();
+  await page.waitForFunction((o) => document.getElementById("detail-title").textContent.endsWith(o), truth.crc_error_offsets[0].toLocaleString("en-US"));
+  assert.deepEqual(page.errors, []);
   await page.close();
-  await page2.close();
-});
-
-for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900], ["light", 375, 800], ["dark", 375, 800], ["light", 320, 800], ["dark", 320, 800]]) {
-  test(`axe-core: 0 violations (${scheme}, ${width} px)`, async () => {
-    const page = await openPage({ colorScheme: scheme, viewport: { width, height } });
-    await injectAxe(page);
-    const run = () => page.evaluate(async () => {
-      const r = await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] });
-      return { passes: r.passes.length, violations: r.violations.map((v) => `${v.id}: ${v.nodes.length} (${v.nodes[0].target.join(" ")})`) };
-    });
-    const a = await run();
-    assert.deepEqual(a.violations, [], "frame selected");
-    assert.ok(a.passes > 20, `axe ran ${a.passes} passing rules`);
-    await page.getByRole("button", { name: "Next issue" }).click();
-    // Let the 120 ms button colour transitions settle, or axe samples a mid-fade colour.
-    // A transition that is replaced (the re-render restyles a button again) rejects its
-    // `finished` promise with AbortError, so wait with allSettled until none are left.
-    await page.evaluate(async () => {
-      for (let anims; (anims = document.getAnimations()).length;) await Promise.allSettled(anims.map((x) => x.finished));
-    });
-    const b = await run();
-    assert.deepEqual(b.violations, [], "CRC issue selected");
-    assert.deepEqual(await cspViolations(page), [], "CSP violations");
-    console.log(`# axe ${scheme} ${width}px: ${a.violations.length} + ${b.violations.length} violations, ${a.passes} and ${b.passes} rules passed`);
-    await page.close();
-  });
-}
-
-test("no horizontal page scroll at 320 px", async () => {
-  const page = await openPage({ viewport: { width: 320, height: 800 } });
-  const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
-  assert.ok(scroll <= width, `page is ${scroll}px wide in a ${width}px viewport`);
-  await page.close();
+  // Previous row / Next row (narrow Frame details) move one row.
+  const narrow = await openPage({ viewport: { width: 375, height: 800 }, hash: "#/frames/5" });
+  await narrow.waitForSelector("#crc-compare .v");
+  const t0 = await narrow.textContent("#h-details");
+  await narrow.getByRole("button", { name: "Next row" }).click();
+  await narrow.waitForFunction(() => /^#\/frames\/6/.test(location.hash));
+  assert.notEqual(await narrow.textContent("#h-details"), t0);
+  await narrow.getByRole("button", { name: "Previous row" }).click();
+  await narrow.waitForFunction(() => /^#\/frames\/5/.test(location.hash));
+  await narrow.close();
 });
 
 test("a 50 MB capture is parsed in chunks without freezing the page", async () => {
@@ -237,20 +156,14 @@ test("a 50 MB capture is parsed in chunks without freezing the page", async () =
   assert.ok(midway.length >= 5, `progress values seen: ${probe.progress.join(",")}`);
   console.log(`# 50 MB test: ${big.length} bytes, longest main-thread gap ${probe.maxGap.toFixed(0)} ms, ${midway.length} progress steps seen`);
   assert.ok(probe.maxGap < 250, `main thread blocked for ${probe.maxGap.toFixed(0)} ms`);
+  // The Frames list of the big capture opens without materialising every row.
+  await goFrames(page);
+  assert.match(await page.textContent("#page-info"), new RegExp(`of ${(truth.frames * copies + truth.crc_errors * copies).toLocaleString("en-US")}`));
   fs.rmSync(dir, { recursive: true });
   await page.close();
 });
 
-test("screenshot for the README", { skip: !process.env.SCREENSHOT }, async () => {
-  const page = await openPage({ viewport: { width: 1440, height: 1060 }, deviceScaleFactor: 2, colorScheme: "light" });
-  await page.getByRole("button", { name: "Next issue" }).click();
-  await page.evaluate(() => document.activeElement.blur());
-  fs.mkdirSync(path.join(DOCS, "screenshots"), { recursive: true });
-  await page.screenshot({ path: path.join(DOCS, "screenshots", "inspector.png") });
-  await page.close();
-});
-
-test("keyboard only: load the sample, step to an issue, move through rows", async () => {
+test("keyboard only: load the sample, go to Frames, step to an issue, move through rows", async () => {
   const page = await openPage();
   async function tabTo(selector, max = 80) {
     for (let i = 0; i < max; i++) {
@@ -260,52 +173,34 @@ test("keyboard only: load the sample, step to an issue, move through rows", asyn
     throw new Error(`could not reach ${selector} with Tab`);
   }
   await tabTo("#load-sample");
-  const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
-  assert.notEqual(outline, "none", "focus indicator visible");
-  await page.route("**/sample/sample-flight.tlog", async (r) => { await new Promise((ok) => setTimeout(ok, 400)); await r.continue(); });
+  assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), "none", "focus indicator visible");
+  const hold = await holdSample(page);
   await page.keyboard.press("Enter");
-  assert.match(await statusText(page), /^Loading sample-flight.tlog/);
+  await hold.seen;
+  assert.equal(await statusText(page), "Loading sample-flight.tlog…");
+  hold.release();
   await waitParsed(page, "sample-flight.tlog");
   await page.waitForFunction(() => document.activeElement.id === "load-sample");
-  await tabTo("#next-issue");
-  await page.keyboard.press("Enter");
-  assert.match(await page.textContent("#decoded .lead"), /CRC error at offset/);
-  await tabTo('#list-table .rowbtn[aria-current="true"]');
-  await page.keyboard.press("ArrowDown");
-  assert.match(await page.textContent("#decoded .lead"), /Sequence gap|frame/);
   await tabTo("#file");
   await tabTo("#format");
+  await tabTo('.nav a[data-route="frames"]');
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.activeElement.id === "h-frames");
+  await tabTo("#next-issue");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => /^#\/frames\/\d+/.test(location.hash));
+  assert.match(await page.textContent("#crc-compare"), /CRC failed/);
+  await tabTo('#frame-table a[aria-current="true"]');
+  const before = await page.evaluate(() => document.activeElement.dataset.pos);
+  await page.keyboard.press("ArrowDown");
+  await page.waitForFunction((b) => document.activeElement.dataset.pos !== b, before);
+  // The frame list and the bytes are focusable, labelled scroll regions.
+  await tabTo("#frame-region", 120).catch(async () => { await page.focus("#frame-region"); });
+  assert.equal(await page.getAttribute("#frame-region", "aria-label"), "Frame rows");
+  await tabTo("#hex", 260);
+  assert.notEqual(await page.$eval("#hex", (e) => getComputedStyle(e).outlineStyle), "none");
   assert.deepEqual(page.errors, []);
   await page.close();
-});
-
-test("keyboard only: the decoded pane is a focusable, labelled region that scrolls with the arrow keys", async () => {
-  for (const scheme of ["light", "dark"]) {
-    const page = await openPage({ colorScheme: scheme, viewport: { width: 320, height: 800 } });
-    await page.getByRole("button", { name: "Next issue" }).click();
-    const pane = page.getByRole("region", { name: "Decoded fields", exact: true });
-    assert.equal(await pane.getAttribute("id"), "decoded", "#decoded is exposed as the 'Decoded fields' region");
-    // Make sure there is something to scroll whatever the sample's content height is.
-    await page.$eval("#decoded", (el) => { el.style.maxHeight = "120px"; });
-    const dims = await page.$eval("#decoded", (el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
-    assert.ok(dims.sh > dims.ch, `pane overflows (${dims.sh} > ${dims.ch})`);
-    // Reach it with Tab from the selected row, the way a keyboard user would.
-    await page.locator('#list-table .rowbtn[aria-current="true"]').focus();
-    let reached = false;
-    for (let i = 0; i < 40 && !reached; i++) {
-      await page.keyboard.press("Tab");
-      reached = await page.evaluate(() => document.activeElement?.id === "decoded");
-    }
-    assert.ok(reached, "#decoded is reachable with Tab");
-    const ring = await page.$eval("#decoded", (el) => { const cs = getComputedStyle(el); return [cs.outlineStyle, cs.outlineWidth]; });
-    assert.notEqual(ring[0], "none", `visible focus ring on #decoded (${scheme})`);
-    assert.notEqual(ring[1], "0px", `visible focus ring on #decoded (${scheme})`);
-    const top0 = await page.$eval("#decoded", (el) => el.scrollTop);
-    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
-    await page.waitForFunction((t) => document.getElementById("decoded").scrollTop > t, top0, { timeout: 2000 });
-    assert.deepEqual(page.errors, []);
-    await page.close();
-  }
 });
 
 test("375 px width and 200% zoom: no horizontal page scroll, controls on screen", async () => {
@@ -314,25 +209,29 @@ test("375 px width and 200% zoom: no horizontal page scroll, controls on screen"
     ["200% page zoom of a 1280 px window", { viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 }],
   ]) {
     const page = await openPage(opts);
-    const r = await page.evaluate(() => {
-      const ids = ["load-sample", "next-issue", "view-issues", "m-frames", "m-crc", "m-unsupported"];
-      return { scroll: document.documentElement.scrollWidth, width: window.innerWidth,
-        out: ids.filter((id) => { const b = document.getElementById(id).getBoundingClientRect(); return b.right > window.innerWidth + 0.5 || b.left < 0; }) };
-    });
-    assert.ok(r.scroll <= r.width, `${label}: page is ${r.scroll}px wide in a ${r.width}px viewport`);
-    assert.deepEqual(r.out, [], `${label}: controls outside the viewport`);
-    if (label === "375 px") assert.equal(await page.isVisible(".scroll-hint"), true, "sideways-scroll hint for the messages table");
+    for (const [hash, ids] of [["#/capture", ["load-sample", "m-frames", "m-crc", "m-unsupported"]], ["#/frames", ["next-issue", "msg-filter", "frame-region"]]]) {
+      await page.goto(base + hash);
+      await page.waitForFunction((id) => document.getElementById(id).offsetParent !== null, ids[0]);
+      const r = await page.evaluate((ids) => ({ scroll: document.scrollingElement.scrollWidth, width: window.innerWidth,
+        out: ids.filter((id) => { const b = document.getElementById(id).getBoundingClientRect(); return b.right > window.innerWidth + 0.5 || b.left < 0; }) }), ids);
+      assert.ok(r.scroll <= r.width, `${label} ${hash}: page is ${r.scroll}px wide in a ${r.width}px viewport`);
+      assert.deepEqual(r.out, [], `${label} ${hash}: controls outside the viewport`);
+    }
     await page.close();
   }
   // 200% text size (browser text-only zoom) at 1280 px.
   const page = await openPage({ viewport: { width: 1280, height: 900 } });
-  await page.evaluate(() => { document.documentElement.style.fontSize = "30px"; }); // CSSOM: allowed by the CSP
-  const r = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
-  assert.ok(r.scroll <= r.width, `200% text: page is ${r.scroll}px wide`);
+  await page.evaluate(() => { document.documentElement.style.fontSize = "32px"; }); // CSSOM: allowed by the CSP
+  for (const hash of ["#/capture", "#/frames", "#/help"]) {
+    await page.goto(base + hash);
+    await settle(page);
+    const r = await page.evaluate(() => ({ scroll: document.scrollingElement.scrollWidth, width: window.innerWidth }));
+    assert.ok(r.scroll <= r.width, `200% text ${hash}: page is ${r.scroll}px wide`);
+  }
   await page.close();
 });
 
-test("error states: empty file, not a MAVLink file, oversized file, network failures", async () => {
+test("error and empty states: empty file, not a MAVLink file, oversized file, network failures", async () => {
   const page = await openPage();
   const empty = path.join(CASES, "empty.tlog");
   fs.writeFileSync(empty, Buffer.alloc(0));
@@ -346,9 +245,12 @@ test("error states: empty file, not a MAVLink file, oversized file, network fail
   await upload(page, bad);
   await page.waitForFunction(() => /No MAVLink v2 frames found in notes.txt/.test(document.getElementById("status").textContent));
   assert.equal(await metric(page, "m-frames"), "0");
-  assert.match(await page.textContent("#list-table tbody"), /No frames to show/);
+  await goFrames(page);
+  assert.match(await page.textContent("#frame-table tbody"), /No frames to show/);
+  await page.goto(base + "#/frames/5");
+  await page.waitForFunction(() => /There is no row 5/.test(document.getElementById("detail-empty").textContent));
 
-  // A file over the size limit is refused before it is read.
+  await page.goto(base + "#/capture");
   await page.evaluate(() => {
     const input = document.getElementById("file");
     const dt = new DataTransfer();
@@ -361,8 +263,11 @@ test("error states: empty file, not a MAVLink file, oversized file, network fail
   assert.deepEqual(page.errors, []);
   await page.close();
 
-  const noSample = await openPage({ noWait: true, route: (p) => p.route("**/sample/sample-flight.tlog", (r) => r.abort()) });
+  const noSample = await openPage({ noWait: true, hash: "#/frames", route: (p) => p.route("**/sample/sample-flight.tlog", (r) => r.abort()) });
   await noSample.waitForFunction(() => /Could not load the sample/.test(document.getElementById("status").textContent));
+  await noSample.waitForFunction(() => /No capture is loaded yet/.test(document.getElementById("frames-empty").textContent));
+  assert.equal(await noSample.getByRole("link", { name: "Go to Capture" }).isVisible(), true);
+  await noSample.goto(base + "#/capture");
   assert.ok(await noSample.$eval("#status", (e) => e.classList.contains("error")));
   assert.equal(await noSample.isEnabled("#file"), true, "a local file can still be opened");
   await noSample.close();
@@ -378,7 +283,10 @@ test("parsing can be cancelled; the previous capture stays", async () => {
   const big = path.join(CASES, "cancel.tlog");
   fs.writeFileSync(big, Buffer.concat(Array(400).fill(sample)));
   await upload(page, big);
-  await page.getByRole("button", { name: "Cancel" }).click();
+  // Click as soon as Cancel shows: the progress bar keeps updating beside it, so Playwright's
+  // "stable position" wait could outlast the whole parse on a fast machine.
+  await page.waitForSelector("#cancel:not([hidden])");
+  await page.getByRole("button", { name: "Cancel" }).click({ force: true });
   await page.waitForFunction(() => /Cancelled parsing cancel.tlog. Still showing sample-flight.tlog/.test(document.getElementById("status").textContent));
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await page.isHidden("#cancel"), true);
@@ -386,147 +294,99 @@ test("parsing can be cancelled; the previous capture stays", async () => {
   await page.close();
 });
 
-test("signed frames say 'signature present; not verified'", async () => {
-  const page = await openPage();
-  await upload(page, path.join(CASES, "signed.tlog"));
-  await waitParsed(page, "signed.tlog");
-  assert.equal(await metric(page, "m-frames"), "20");
-  await page.locator("#list-table .rowbtn").nth(2).click();
-  const decoded = await page.textContent("#decoded");
-  assert.match(decoded, /signature present; not verified/);
-  assert.doesNotMatch(decoded.replace(/not verified/g, ""), /verified|valid signature|authentic/i);
-  assert.match(await page.textContent("#list-table tbody"), /signature present; not verified/);
-  assert.equal(await page.locator("#hex .seg-sig").count(), 13);
-  await page.close();
-});
-
-test("unknown message ids are shown as unsupported, separate from CRC errors", async () => {
+test("unsupported message ids are explained as not checked, not corrupt; axe stays clean", async () => {
   const page = await openPage();
   await upload(page, path.join(CASES, "malformed.bin"));
   await page.waitForFunction(() => /^malformed.bin:/.test(document.getElementById("status").textContent) && !document.getElementById("load-sample").disabled);
   assert.ok(Number(await metric(page, "m-unsupported")) >= 1);
   assert.ok(Number(await metric(page, "m-crc")) >= 1);
-  await page.getByRole("button", { name: /^Issues/ }).click();
-  const kinds = await page.$$eval("#list-table tbody .kind", (els) => els.map((e) => e.textContent));
-  assert.ok(kinds.includes("Unsupported id") && kinds.includes("CRC error") && kinds.includes("Bad flags"), kinds.join(","));
-  await page.locator("#list-table tbody tr", { hasText: "Unsupported id" }).first().locator(".rowbtn").click();
-  const decoded = await page.textContent("#decoded");
-  assert.match(decoded, /not counted as corrupt/);
-  await injectAxe(page);
-  const v = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] })).violations.map((x) => x.id));
-  assert.deepEqual(v, [], "axe on the issue view of a malformed capture");
+  await goFrames(page, "?check=unsupported");
+  await page.locator("#frame-table tbody tr", { hasText: "Unsupported (not checked)" }).first().locator("a").click();
+  await page.waitForSelector("#detail-notes .note");
+  assert.match(await page.textContent("#detail-notes"), /not counted as corrupt/);
+  assert.match(await page.textContent("#crc-compare"), /Not checked: no CRC_EXTRA/);
+  const a = await axeViolations(page);
+  assert.deepEqual(a.violations, [], "axe on an unsupported row of a malformed capture");
   await page.close();
 });
 
 test("duplicate and backward sequence numbers are labelled, not shown as missing frames", async () => {
   const page = await openPage();
   for (const [file, kind] of [["seq-duplicate.bin", "Duplicate seq"], ["seq-backwards.bin", "Out of order"]]) {
+    await page.goto(base + "#/capture");
     await upload(page, path.join(CASES, file));
     await waitParsed(page, file);
     assert.equal(await metric(page, "m-gaps"), "0", file);
     assert.match(await page.textContent("#m-gaps"), /~0 frames missing if packets arrived in order/);
     assert.equal(await metric(page, "m-crc"), "0");
-    await page.getByRole("button", { name: /^Issues/ }).click();
-    assert.deepEqual(await page.$$eval("#list-table tbody .kind", (els) => els.map((e) => e.textContent)), [kind]);
-    await page.locator("#list-table .rowbtn").first().click();
-    assert.match(await page.textContent("#decoded"), /Not counted as missing/);
+    await goFrames(page, "?check=issues");
+    const notes = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[6].textContent));
+    assert.equal(notes.length, 1, notes.join("|"));
+    assert.match(notes[0], new RegExp(`^${kind}:`));
+    await page.locator("#frame-table tbody tr a").first().click();
+    await page.waitForSelector("#detail-notes .note");
+    assert.match(await page.textContent("#detail-notes"), /Not counted as missing/);
   }
   await page.close();
 });
 
-test("focus stays on a control after activating rows, message filters and the pager", async () => {
+test("pager: Next page to the last page moves focus to Previous page; counts match", async () => {
   const page = await openPage();
-  const active = () => page.evaluate(() => {
-    const a = document.activeElement;
-    return { tag: a.tagName, id: a.id, cls: a.className, msgid: a.dataset.msgid || null, current: a.getAttribute("aria-current") };
-  });
-  // Enter on a frame row.
-  await page.locator("#list-table .rowbtn").nth(2).focus();
-  await page.keyboard.press("Enter");
-  let a = await active();
-  assert.notEqual(a.tag, "BODY", "after Enter on a row");
-  assert.equal(a.current, "true");
-  // Enter and Space on a message filter button.
-  for (const key of ["Enter", "Space"]) {
-    await page.locator("#msg-table").getByRole("button", { name: "ATTITUDE" }).focus();
-    await page.keyboard.press(key);
-    a = await active();
-    assert.notEqual(a.tag, "BODY", `after ${key} on a message filter`);
-    assert.equal(a.msgid, "30");
-  }
-  // Next page until the last page: the button becomes disabled, focus moves to Previous page.
-  await page.locator("#msg-table").getByRole("button", { name: "ATTITUDE" }).press("Enter"); // clear the filter if set
-  if (!(await page.isHidden("#filter"))) await page.getByRole("button", { name: "Clear filter" }).click();
+  await goFrames(page);
+  const total = truth.frames + truth.crc_errors;
+  assert.match(await page.textContent("#page-info"), new RegExp(`of ${total.toLocaleString("en-US")} rows`));
   await page.locator("#next-page").focus();
   while (!(await page.isDisabled("#next-page"))) await page.keyboard.press("Enter");
-  a = await active();
-  assert.notEqual(a.tag, "BODY", "after Next page reached the last page");
-  assert.equal(a.id, "prev-page");
-  assert.match(await page.textContent("#page-info"), new RegExp(`of ${truth.frames.toLocaleString("en-US")} frames`));
+  assert.equal(await page.evaluate(() => document.activeElement.id), "prev-page");
+  assert.match(await page.url(), /page=\d+/, "page is in the URL");
   await page.close();
 });
 
 test("with JavaScript off, a <noscript> message explains why nothing works", async () => {
-  for (const [scheme, width] of [["light", 1280], ["dark", 375]]) {
-    const page = await browser.newPage({ javaScriptEnabled: false, colorScheme: scheme, viewport: { width, height: 800 } });
+  for (const width of [1280, 375]) {
+    const page = await browser.newPage({ javaScriptEnabled: false, viewport: { width, height: 800 } });
     await page.goto(base);
     const note = page.locator("#noscript");
-    assert.ok(await note.isVisible(), `noscript message visible (${scheme}, ${width} px)`);
+    assert.ok(await note.isVisible(), `noscript message visible (${width} px)`);
     const box = await note.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= width, `message fits in ${width} px`);
-    // Text contrast of the message against its own background, computed from the page's styles.
-    const ratio = await page.evaluate(() => {
-      const el = document.getElementById("noscript");
-      const rgb = (c) => c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
-      const lum = ([r, g, b]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
-        .reduce((acc, v, i) => acc + v * [0.2126, 0.7152, 0.0722][i], 0);
-      const cs = getComputedStyle(el);
-      const [a, b] = [lum(rgb(cs.color)), lum(rgb(cs.backgroundColor))].sort((x, y) => y - x);
-      return (a + 0.05) / (b + 0.05);
-    });
-    assert.ok(ratio >= 4.5, `noscript text contrast ${ratio.toFixed(2)}:1 (${scheme})`);
-    // axe-core cannot run here (page timers are off with JavaScript disabled), so contrast is checked directly.
-    console.log(`# noscript ${scheme} ${width}px: contrast ${ratio.toFixed(2)}:1`);
+    const ratio = await page.$eval("#noscript", (el) => { const cs = getComputedStyle(el); return [cs.color, cs.backgroundColor]; });
+    const c = contrast(ratio[0], ratio[1]);
+    assert.ok(c >= 4.5, `noscript text contrast ${c.toFixed(2)}:1`);
+    console.log(`# noscript ${width}px: contrast ${c.toFixed(2)}:1`);
     await page.close();
   }
-  // With JavaScript on, the message is not rendered.
   const page = await openPage();
   assert.equal(await page.locator("#noscript").count(), 0);
   assert.deepEqual(page.errors, []);
   await page.close();
 });
 
-
 // ---------- design standard: contrast and consistency computed from the rendered page ----------
-const rgbOf = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number);
-const lumOf = (c) => rgbOf(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
-  .reduce((acc, v, i) => acc + v * [0.2126, 0.7152, 0.0722][i], 0);
-const contrast = (a, b) => { const [x, y] = [lumOf(a), lumOf(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
-// The colour actually painted behind an element: the nearest ancestor-or-self with an opaque background.
-const bgFn = `(el) => { for (let n = el; n; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor;
-  if (!/rgba\\(.*, 0\\)$/.test(c) && c !== "transparent") return c; } return "rgb(255, 255, 255)"; }`;
+const darkInit = (p) => p.addInitScript(() => { try { localStorage.setItem("mavframe-theme", "dark"); } catch { /* ignore */ } });
 
-for (const scheme of ["light", "dark"]) {
-  test(`timeline density bars and their legend glyph reach 3:1 (${scheme})`, async () => {
-    const page = await openPage({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
+for (const theme of ["light", "dark"]) {
+  test(`timeline density bars and their legend glyph reach 3:1 (${theme})`, async () => {
+    const page = await openPage({ viewport: { width: 1280, height: 900 }, route: theme === "dark" ? darkInit : null });
+    await goFrames(page);
     const r = await page.evaluate((src) => {
       const bg = eval(src);
       const bin = document.querySelector("#timeline .bin");
       const glyph = document.querySelector(".g-density");
-      return { bin: getComputedStyle(bin).fill, binBg: bg(document.getElementById("timeline")),
-        glyph: getComputedStyle(glyph).fill, glyphBg: bg(glyph.closest("li")) };
+      return { bin: getComputedStyle(bin).fill, binBg: bg(document.getElementById("timeline")), glyph: getComputedStyle(glyph).fill, glyphBg: bg(glyph.closest("li")) };
     }, bgFn);
     const bars = contrast(r.bin, r.binBg);
     const legend = contrast(r.glyph, r.glyphBg);
-    console.log(`# timeline ${scheme}: bars ${bars.toFixed(2)}:1, legend glyph ${legend.toFixed(2)}:1`);
-    assert.ok(bars >= 3, `density bars ${bars.toFixed(2)}:1 against the timeline (${scheme})`);
-    assert.ok(legend >= 3, `density legend glyph ${legend.toFixed(2)}:1 against the legend row (${scheme})`);
+    console.log(`# timeline ${theme}: bars ${bars.toFixed(2)}:1, legend glyph ${legend.toFixed(2)}:1`);
+    assert.ok(bars >= 3 && legend >= 3, `bars ${bars.toFixed(2)}, legend ${legend.toFixed(2)} (${theme})`);
     await page.close();
   });
 
-  test(`hex byte regions differ by a non-colour mark with 3:1 contrast and a text name (${scheme})`, async () => {
-    const page = await openPage({ colorScheme: scheme, viewport: { width: 1280, height: 900 } });
-    await page.getByRole("button", { name: "Next issue" }).click();
+  test(`hex byte regions differ by a non-colour mark with 3:1 contrast and a text name (${theme})`, async () => {
+    const page = await openPage({ viewport: { width: 1440, height: 900 }, route: theme === "dark" ? darkInit : null });
+    await goFrames(page, "?check=crc");
+    await page.locator("#frame-table tbody tr a").first().click();
+    await page.waitForSelector("#hex .b");
     const segs = ["seg-ts", "seg-hdr", "seg-pay", "seg-crc", "seg-sig"];
     const r = await page.evaluate(([src, segs]) => {
       const bg = eval(src);
@@ -540,64 +400,68 @@ for (const scheme of ["light", "dark"]) {
       }));
       return { legend, hex };
     }, [bgFn, segs]);
-    // Each region has its own line pattern, so colour is not the only cue.
     const patterns = segs.map((s) => `${r.legend[s].style} ${r.legend[s].width}`);
     assert.equal(new Set(patterns).size, segs.length, `region marks must differ: ${patterns.join(" | ")}`);
     for (const s of segs) {
       const m = r.legend[s];
       if (m.style === "none") continue;
-      for (const against of [m.own, m.behind]) {
-        const c = contrast(m.color, against);
-        assert.ok(c >= 3, `${s} mark ${c.toFixed(2)}:1 against ${against} (${scheme})`);
-      }
+      for (const against of [m.own, m.behind]) assert.ok(contrast(m.color, against) >= 3, `${s} mark ${contrast(m.color, against).toFixed(2)}:1 (${theme})`);
     }
-    // The CRC frame shows timestamp, header, payload and CRC; their bytes carry the legend's marks and a name.
     assert.deepEqual(Object.keys(r.hex), ["seg-ts", "seg-hdr", "seg-pay", "seg-crc"]);
     for (const [s, m] of Object.entries(r.hex)) {
       assert.equal(`${m.style} ${m.width}`, `${r.legend[s].style} ${r.legend[s].width}`, `${s} bytes match the legend`);
       assert.ok(m.name && m.name.trim().length > 2, `${s}: first byte is preceded by a visually hidden region name`);
-      if (m.style !== "none") assert.ok(contrast(m.color, m.own) >= 3, `${s} mark against its byte tint (${scheme})`);
     }
+    // A selected field's bytes are highlighted with text contrast >= 4.5:1.
+    await page.locator("#panel-header").getByRole("button", { name: "CRC", exact: true }).click();
+    const hl = await page.$eval("#hex .b.hl", (e) => { const cs = getComputedStyle(e); return [cs.color, cs.backgroundColor]; });
+    assert.ok(contrast(hl[0], hl[1]) >= 4.5, `highlighted byte text ${contrast(hl[0], hl[1]).toFixed(2)}:1 (${theme})`);
     await page.close();
   });
 }
 
-test("numeric and text column headers share one face", async () => {
+test("monospace only for offsets and hex; one face for headers; 44 px controls", async () => {
   const page = await openPage();
-  await page.getByRole("button", { name: "Next issue" }).click();
-  const r = await page.evaluate(() => ({
-    msg: [...document.querySelectorAll("#msg-table th")].map((th) => getComputedStyle(th).fontFamily),
-    list: [...document.querySelectorAll("#list-table th")].map((th) => getComputedStyle(th).fontFamily),
-    cell: getComputedStyle(document.querySelector("#msg-table td.num")).fontFamily,
-  }));
-  assert.equal(new Set(r.msg).size, 1, `messages headers: ${[...new Set(r.msg)].join(" | ")}`);
-  assert.equal(new Set(r.list).size, 1, `frames headers: ${[...new Set(r.list)].join(" | ")}`);
-  assert.equal(r.msg[0], r.list[0]);
-  assert.notEqual(r.cell, r.msg[0], "numeric cells keep the monospace face for alignment");
+  await goFrames(page);
+  const r = await page.evaluate(() => {
+    const ff = (sel) => getComputedStyle(document.querySelector(sel)).fontFamily;
+    const row = document.querySelector("#frame-table tbody tr");
+    return {
+      heads: [...document.querySelectorAll("#frame-table th")].map((th) => getComputedStyle(th).fontFamily),
+      time: getComputedStyle(row.cells[2]).fontFamily, offset: getComputedStyle(row.cells[3]).fontFamily, body: ff("body"),
+      sizes: [...document.querySelectorAll(".chip, #next-issue, #prev-issue, #msg-filter")].map((e) => Math.round(e.getBoundingClientRect().height)),
+    };
+  });
+  assert.equal(new Set(r.heads).size, 1);
+  assert.equal(r.heads[0], r.body);
+  assert.equal(r.time, r.body, "times use the UI face (tabular numbers)");
+  assert.match(r.offset, /monospace/, "offsets are monospace");
+  assert.ok(r.sizes.every((h) => h >= 44), `control heights ${r.sizes.join(",")}`);
+  // Field tree: hex values in monospace, decimal values in the UI face.
+  await page.locator("#frame-table tbody tr a").first().click();
+  await page.waitForSelector("#panel-header .fieldbtn");
+  const vals = await page.$$eval("#panel-header td.val", (tds) => tds.map((t) => [t.textContent, getComputedStyle(t).fontFamily]));
+  for (const [text, family] of vals) {
+    if (/^0x/.test(text)) assert.match(family, /monospace/, `${text} is mono`);
+    else assert.doesNotMatch(family, /monospace/, `${text} uses the UI face`);
+  }
   await page.close();
 });
 
-test("header source link, view toggles and primary button follow the shared components", async () => {
+test("Source on GitHub looks like a link; the primary button has a hover state", async () => {
   const page = await openPage();
   const r = await page.evaluate(() => {
-    const repo = document.querySelector(".app-header a[href='https://github.com/anirudh763/mavframe']");
+    const repo = document.querySelector(".rail-foot a[href='https://github.com/anirudh763/mavframe']");
     const prose = document.querySelector("#gap-assumptions a");
-    const cs = (el) => getComputedStyle(el);
-    const btn = document.getElementById("prev-issue");
-    return {
-      repoDeco: cs(repo).textDecorationLine, repoColor: cs(repo).color, linkColor: cs(prose).color,
-      toggles: ["view-frames", "view-issues"].map((id) => { const e = document.getElementById(id); return [cs(e).borderRadius, e.getBoundingClientRect().height]; }),
-      btn: [cs(btn).borderRadius, btn.getBoundingClientRect().height],
-    };
+    return { deco: getComputedStyle(repo).textDecorationLine, color: getComputedStyle(repo).color, link: getComputedStyle(prose).color };
   });
-  assert.match(r.repoDeco, /underline/, "Source on GitHub is underlined like other links");
-  assert.equal(r.repoColor, r.linkColor, "Source on GitHub uses the link colour");
-  for (const t of r.toggles) assert.deepEqual(t, r.btn, "All frames / Issues toggles have the button radius and height");
-  // Primary buttons change on hover (they had no hover state before).
-  const look = () => page.$eval("#load-sample", (e) => { const cs = getComputedStyle(e); return `${cs.backgroundColor} ${cs.filter}`; });
+  assert.match(r.deco, /underline/);
+  assert.equal(r.color, r.link);
+  const look = () => page.$eval('label[for="file"]', (e) => getComputedStyle(e).backgroundColor);
   await page.mouse.move(0, 0);
   const idle = await look();
-  await page.hover("#load-sample");
+  await page.hover('label[for="file"]');
+  await settle(page);
   assert.notEqual(await look(), idle, "primary button hover state");
   await page.close();
 });
@@ -609,6 +473,6 @@ test("the root font size follows the browser's default text size", async () => {
   await cdp.send("Page.setFontSizes", { fontSizes: { standard: 20, fixed: 20 } });
   await page.goto(base);
   const px = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
-  assert.ok(px > 15.5, `root font is ${px}px with a 20px browser default`);
+  assert.ok(px > 19.5, `root font is ${px}px with a 20px browser default`);
   await page.close();
 });

@@ -1,20 +1,28 @@
-// UI for the mavframe inspector. Analysis lives in core.js; this file only
-// renders. Everything taken from a capture is inserted with textContent.
-import {
-  loadParser, analyze, frameAt, decodePayload, formatValue, messageName, MAX_CAPTURE_BYTES,
-} from "./core.js";
+// UI for the mavframe inspector: hash routes, the packet analyzer (frame list |
+// field tree | bytes) and the finding export. Analysis lives in core.js (the
+// C parser in WebAssembly), rows.js and anatomy.js; this file only renders.
+// Everything taken from a capture is inserted with textContent.
+import { loadParser, analyze, MAX_CAPTURE_BYTES } from "./core.js";
+import { rowIndex, rowInfo, filterRows, issuePositions, CANDIDATE_KINDS } from "./rows.js";
+import { anatomy, hexN, msgLabel } from "./anatomy.js";
+import { buildFinding } from "./finding.js";
 
 const SAMPLE = { url: "sample/sample-flight.tlog", name: "sample-flight.tlog" };
 const PAGE = 100;
+// The three-pane analyzer needs room for the list, the header fields (8 rows of 44px targets) and
+// 8+ rows of bytes at once; below this size Frames -> Frame details is a two-step route.
+const WIDE = window.matchMedia("(min-width: 1200px) and (min-height: 880px)");
+const CHECKS = ["all", "issues", "crc", "unsupported", "valid"];
+const TABS = ["decoded", "bytes", "header"];
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => n.toLocaleString("en-US");
 
 const state = {
-  parser: null, result: null, bytes: null, name: "", isSample: false, busy: false,
-  view: "frames", msg: null, sel: null, page: 0, rows: null, pendingHash: null,
+  parser: null, result: null, bytes: null, name: "", isSample: false, busy: false, abort: null,
+  rowsKey: "", rows: null, lastScreen: null, lastHash: null, prevRoute: null, route: null, keepFocusNext: false,
 };
 
-// ---------- small DOM helpers ----------
+// ---------- DOM helpers ----------
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -33,8 +41,6 @@ const svgEl = (tag, attrs = {}) => {
   return e;
 };
 const hex2 = (b) => b.toString(16).padStart(2, "0");
-const hexN = (v, n) => "0x" + v.toString(16).toUpperCase().padStart(n, "0");
-const msgLabel = (id) => messageName(id) || `id ${id}`;
 
 function setStatus(text, isError = false) {
   const s = $("status");
@@ -50,12 +56,120 @@ function yieldToBrowser() {
   return new Promise((resolve) => { waiting.push(resolve); channel.port2.postMessage(0); });
 }
 
+const timeMode = () => state.result && !Number.isNaN(state.result.firstTs) && state.result.endTs > state.result.firstTs;
 function relTime(ts) {
   const r = state.result;
   if (!r || Number.isNaN(ts) || Number.isNaN(r.firstTs)) return "";
   return ((ts - r.firstTs) / 1e6).toFixed(3);
 }
-const timeMode = () => state.result && !Number.isNaN(state.result.firstTs) && state.result.endTs > state.result.firstTs;
+
+// ---------- routes ----------
+// #/capture | #/frames?check=&msg=&page= | #/frames/<index>?check=&msg=&tab=&f= | #/help
+function parseHash(hash) {
+  if (!hash || hash === "#" || hash === "#/") return { screen: "capture", params: {} };
+  if (/^#(view|msg|sel)=/.test(hash)) return { screen: "legacy", params: {} };
+  if (!hash.startsWith("#/")) return { screen: "anchor", params: {} };
+  const [path, query = ""] = hash.slice(2).split("?");
+  const q = new URLSearchParams(query);
+  const msg = Number.parseInt(q.get("msg") ?? "", 10);
+  const page = Number.parseInt(q.get("page") ?? "", 10);
+  const params = {
+    check: CHECKS.includes(q.get("check")) ? q.get("check") : "all",
+    msg: Number.isInteger(msg) && msg >= 0 ? msg : null,
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+    tab: TABS.includes(q.get("tab")) ? q.get("tab") : "decoded",
+    f: q.get("f") || null,
+  };
+  if (path === "capture") return { screen: "capture", params };
+  if (path === "help") return { screen: "help", params };
+  if (path === "frames") return { screen: "frames", params };
+  const m = /^frames\/(\d{1,9})$/.exec(path);
+  if (m) return { screen: "details", index: Number(m[1]), params };
+  return { screen: "notfound", params };
+}
+
+function buildHash(screen, p = {}) {
+  const q = new URLSearchParams();
+  if (p.check && p.check !== "all") q.set("check", p.check);
+  if (p.msg !== null && p.msg !== undefined) q.set("msg", String(p.msg));
+  if (screen === "frames" && p.page > 1) q.set("page", String(p.page));
+  if (screen === "details" && p.tab && p.tab !== "decoded") q.set("tab", p.tab);
+  if (screen === "details" && p.f) q.set("f", p.f);
+  const qs = q.toString();
+  const path = screen === "details" ? `frames/${p.index}` : screen;
+  return `#/${path}${qs ? "?" + qs : ""}`;
+}
+
+function navigate(hash, { replace = false, keepFocus = false } = {}) {
+  if (hash === location.hash) { render({ keepFocus }); return; }
+  history[replace ? "replaceState" : "pushState"](null, "", hash);
+  render({ keepFocus });
+}
+
+// Links from the single-page inspector (#view=issues&msg=30&sel=f12) map to the new routes.
+function legacyTarget(hash) {
+  const r = state.result;
+  const p = new URLSearchParams(hash.slice(1));
+  const check = p.get("view") === "issues" ? "issues" : "all";
+  const msg = Number.parseInt(p.get("msg") ?? "", 10);
+  const params = { check, msg: Number.isInteger(msg) && r.messages.some((x) => x.msgid === msg) ? msg : null };
+  const m = /^([fi])(\d{1,9})$/.exec(p.get("sel") || "");
+  if (m) {
+    const i = Number(m[2]);
+    const idx = rowIndex(r);
+    let pos = -1;
+    if (m[1] === "f") pos = idx.positionOf({ t: "f", i });
+    else if (r.issues[i]) pos = CANDIDATE_KINDS.has(r.issues[i].kind) ? idx.positionOf({ t: "i", i }) : idx.positionOf({ t: "f", i: r.issues[i].frame });
+    if (pos >= 0) return buildHash("details", { ...params, index: pos });
+  }
+  return buildHash("frames", params);
+}
+
+const SCREENS = { capture: "screen-capture", frames: "screen-frames", details: "screen-details", help: "screen-help", notfound: "screen-notfound" };
+const TITLES = { capture: "Capture", frames: "Frames", details: "Frame details", help: "Format help", notfound: "Not found" };
+
+function render({ keepFocus = false } = {}) {
+  if (state.keepFocusNext) { keepFocus = true; state.keepFocusNext = false; }
+  const route = parseHash(location.hash);
+  if (route.screen === "anchor") return;
+  if (route.screen === "legacy") {
+    if (state.result) { history.replaceState(null, "", legacyTarget(location.hash)); render(); return; }
+    route.screen = "frames"; // shown as loading until the sample is parsed
+  }
+  if (state.route && location.hash !== state.lastHash) state.prevRoute = state.route;
+  state.route = route;
+  state.lastHash = location.hash;
+  const wide = WIDE.matches;
+  const screen = route.screen === "details" && wide ? "frames" : route.screen;
+  for (const [name, id] of Object.entries(SCREENS)) $(id).hidden = name !== screen;
+
+  // On wide screens a selected row stays on the Frames screen (the analyzer), so title, H1 and
+  // breadcrumb say Frames; on narrow screens #/frames/<row> is its own Frame details screen.
+  const shown = route.screen === "details" && wide ? "frames" : route.screen;
+  document.title = `${TITLES[shown]} – Mavframe`;
+  document.body.classList.toggle("analyzer-mode", wide && screen === "frames");
+  const crumbs = ["Mavframe", ...(shown === "details" ? ["Frames", "Frame details"] : [TITLES[shown]])];
+  $("crumbs").replaceChildren(...crumbs.map((c, i) => el("li", { "aria-current": i === crumbs.length - 1 ? "page" : null, text: c })));
+  const nav = route.screen === "details" ? "frames" : route.screen;
+  for (const a of document.querySelectorAll(".nav a[data-route]")) {
+    if (a.dataset.route === nav) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+  const back = $("back-link");
+  back.hidden = shown !== "details";
+  back.href = buildHash("frames", route.params);
+
+  if (screen === "capture") renderCapture();
+  if (screen === "frames") renderFrames(route);
+  if (screen === "details") renderDetailsScreen(route);
+
+  const changed = state.lastScreen !== null && state.lastScreen !== screen;
+  const first = state.lastScreen === null;
+  state.lastScreen = screen;
+  if (!first && (changed || !keepFocus)) {
+    if (changed) window.scrollTo(0, 0);
+    $(SCREENS[screen]).querySelector("h1").focus();
+  }
+}
 
 // ---------- loading ----------
 function setBusy(busy, cancellable = false) {
@@ -86,41 +200,29 @@ async function run(bytes, name, isSample) {
     });
     progress.value = 100;
     await yieldToBrowser();
-    Object.assign(state, { result, bytes, name, isSample, sel: null, page: 0, rows: null });
-    const hash = state.pendingHash;
-    state.pendingHash = null;
-    if (hash && isSample) applyHash(hash);
-    else Object.assign(state, { view: "frames", msg: null });
-    renderSource();
-    renderSummary();
-    renderMessages();
-    if (!state.sel && result.frameCount) state.sel = { t: "f", i: 0 };
-    renderList();
-    renderTimeline();
-    renderDetail();
+    Object.assign(state, { result, bytes, name, isSample, rows: null, rowsKey: "" });
+    fillMessageFilter();
     if (result.validFrames === 0) {
       setStatus(`No MAVLink v2 frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
         (result.unsupported ? `, ${fmt(result.unsupported)} candidates with message ids outside the common dialect` : "") +
         ". Open a .tlog or raw MAVLink v2 capture (v1-only streams are not supported).", true);
     } else {
-      setStatus(`${name}: ${fmt(result.validFrames)} valid frames, ${fmt(result.crcErrors)} CRC errors, ` +
+      setStatus(`${name}: ${fmt(result.validFrames)} valid frames, ${fmt(result.crcErrors)} CRC failures, ` +
         `${fmt(result.unsupported)} unsupported, ${fmt(result.gaps)} sequence gaps (~${fmt(result.missingFrames)} frames missing if in order), ` +
         `${fmt(result.skippedBytes)} skipped bytes.`);
     }
+    render({ keepFocus: true });
   } catch (err) {
-    if (err.name === "AbortError") {
-      setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ""));
-    } else {
-      setStatus(`Could not parse ${name}: ${err.message}`, true);
-    }
+    if (err.name === "AbortError") setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ""));
+    else setStatus(`Could not parse ${name}: ${err.message}`, true);
   } finally {
     progress.hidden = ptext.hidden = true;
     setBusy(false);
   }
 }
 
-// The status and the disabled controls change before the first await, so
-// the previous result's status is never shown while a new load is running.
+// The status and the disabled controls change before the first await, so the
+// previous result's status is never shown while a new load is running.
 async function loadSample() {
   if (state.busy) return;
   setBusy(true);
@@ -166,23 +268,24 @@ async function openFile(file) {
   await run(bytes, file.name, false);
 }
 
-function renderSource() {
+// ---------- Capture ----------
+function renderCapture() {
+  const r = state.result;
+  $("capture-result").hidden = !r;
+  if (!r) return;
   const s = $("source");
   s.replaceChildren(el("span", { class: "mono", text: state.name }),
-    el("span", { text: `${fmt(state.bytes.length)} bytes, read as ${state.result.format === "tlog" ? ".tlog" : "raw stream"}` }));
-  if (state.isSample) s.append(el("span", { class: "label warn", text: "Synthetic sample: generated, not a real flight" }));
-}
-
-// ---------- rendering ----------
-function renderSummary() {
-  const r = state.result;
+    el("span", { text: `${fmt(state.bytes.length)} bytes, read as ${r.format === "tlog" ? ".tlog" : "raw stream"}` }));
+  if (state.isSample) {
+    s.append(el("span", { class: "label warn", text: "Engineering fixture: synthetic capture from tools/gen_sample_tlog.py, not a real flight" }));
+  }
   const set = (id, main, sub, cls) => {
     const dd = $(id);
     dd.className = cls || "";
     dd.replaceChildren(main, ...(sub ? [el("span", { class: "sub", text: sub })] : []));
   };
   set("m-frames", fmt(r.validFrames), `${fmt(r.messages.length)} message type${r.messages.length === 1 ? "" : "s"}`);
-  set("m-crc", fmt(r.crcErrors), null, r.crcErrors ? "bad" : "");
+  set("m-crc", fmt(r.crcErrors), "checksum did not match", r.crcErrors ? "bad" : "");
   set("m-gaps", fmt(r.gaps), `~${fmt(r.missingFrames)} frames missing if packets arrived in order; ` +
     `${fmt(r.duplicates)} duplicate, ${fmt(r.reorders)} out of order`, r.gaps ? "warn" : "");
   set("m-skipped", fmt(r.skippedBytes), `of ${fmt(r.byteLength)} bytes`);
@@ -190,54 +293,207 @@ function renderSummary() {
   set("m-rejects", fmt(r.rejects), r.timestampArtifacts ? `incompat flags; ${fmt(r.timestampArtifacts)} 0xFD bytes inside timestamps ignored` : "unsupported incompat flags");
   set("m-duration", timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} s` : "n/a",
     timeMode() ? new Date(r.firstTs / 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "no timestamps in raw streams");
-}
-
-// Long message names may wrap only after an underscore, never mid-word.
-function breakAtUnderscores(name) {
-  const parts = name.split("_");
-  return parts.flatMap((p, i) => (i < parts.length - 1 ? [p + "_", document.createElement("wbr")] : [p]));
+  $("view-frames").textContent = `View ${fmt(rowIndex(r).length)} rows in Frames`;
+  renderMessages();
 }
 
 function renderMessages() {
   const r = state.result;
-  const tbody = $("msg-table").querySelector("tbody");
+  const hz = (v) => (Number.isNaN(v) ? "n/a" : v.toFixed(2));
   const rows = r.messages.map((m) => {
-    const pressed = state.msg === m.msgid;
-    const btn = el("button", { type: "button", class: "rowbtn msgbtn", "aria-pressed": pressed ? "true" : "false", "data-msgid": m.msgid,
-      onclick: () => setFilter(pressed ? null : m.msgid) }, ...breakAtUnderscores(m.name || `id ${m.msgid}`));
-    const hz = (v) => (Number.isNaN(v) ? "n/a" : v.toFixed(2));
     const many = m.sources.length > 1;
-    const sources = el("td", { class: "sources" }, ...m.sources.map((x) => el("span", { class: "src mono",
-      text: many ? `${x.sysid}:${x.compid} at ${hz(x.rateHz)} Hz` : `${x.sysid}:${x.compid}` })));
-    return el("tr", { class: pressed ? "selected" : null },
+    return el("tr", {},
       el("td", { class: "num", text: m.msgid }),
-      el("td", {}, btn),
+      el("td", {}, el("a", { href: buildHash("frames", { msg: m.msgid }), text: m.name || `id ${m.msgid}` })),
       el("td", { class: "num", text: fmt(m.count) }),
       el("td", { class: "num", text: many ? `${hz(m.rateHz)} all` : hz(m.rateHz) }),
       el("td", { class: "num" + (m.crcErrors ? " bad" : ""), text: fmt(m.crcErrors) }),
-      sources);
+      el("td", { class: "sources" }, ...m.sources.map((x) => el("span", { class: "src",
+        text: many ? `${x.sysid}:${x.compid} at ${hz(x.rateHz)} Hz` : `${x.sysid}:${x.compid}` }))));
   });
   if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: 6, class: "muted", text: "No valid MAVLink v2 frames in this capture." })));
-  tbody.replaceChildren(...rows);
+  $("msg-table").querySelector("tbody").replaceChildren(...rows);
 }
 
+function fillMessageFilter() {
+  const r = state.result;
+  const ids = new Set(r.messages.map((m) => m.msgid));
+  for (const it of r.issues) if (CANDIDATE_KINDS.has(it.kind)) ids.add(it.msgid);
+  $("msg-filter").replaceChildren(el("option", { value: "", text: "All messages" }),
+    ...[...ids].sort((a, b) => a - b).map((id) => el("option", { value: String(id), text: `${msgLabel(id)} (${id})` })));
+}
+
+// ---------- Frames: list ----------
+const CHECK_TEXT = { valid: "Valid CRC", crc: "CRC failed", unsupported: "Unsupported (not checked)", reject: "Bad flags (not checked)" };
+const SEQ_TEXT = { gap: "Sequence gap", duplicate: "Duplicate seq", reorder: "Out of order" };
+function seqDetail(it) {
+  if (it.kind === "gap") return `seq ${it.prevSeq} to ${it.seq}, ~${it.missing} missing if in order`;
+  if (it.kind === "duplicate") return `seq ${it.seq} repeated`;
+  return `seq ${it.seq} after ${it.prevSeq}: ${it.reset ? "likely sender restart" : "late frame"}`;
+}
+function noteText(info) {
+  const parts = [];
+  if (info.seqIssue) parts.push(`${SEQ_TEXT[info.seqIssue.kind]}: ${seqDetail(info.seqIssue)}`);
+  if (info.iflags & 1) parts.push("signature present; not verified");
+  return parts.join("; ");
+}
+
+function currentRows(p) {
+  const key = `${p.check}|${p.msg}`;
+  if (state.rowsKey !== key || !state.rows) { state.rows = filterRows(state.result, p.check, p.msg); state.rowsKey = key; }
+  return state.rows;
+}
+
+function framesEmpty(box) {
+  box.hidden = false;
+  if (state.busy || (!state.result && !$("status").classList.contains("error"))) {
+    box.replaceChildren(el("p", { text: "Parsing the capture…" }));
+  } else {
+    box.replaceChildren(el("p", { text: "No capture is loaded yet." }),
+      el("p", {}, el("a", { class: "btn", href: "#/capture", text: "Go to Capture" }), " to open a file or load the engineering sample."));
+  }
+}
+
+function renderFrames(route) {
+  const r = state.result;
+  if (!r) {
+    $("frames-body").hidden = true;
+    framesEmpty($("frames-empty"));
+    return;
+  }
+  $("frames-empty").hidden = true;
+  $("frames-body").hidden = false;
+  const p = route.params;
+  const wide = WIDE.matches;
+  const c = (n, label) => el("span", {}, el("strong", { text: fmt(n) }), ` ${label}`);
+  $("frames-counts").replaceChildren(el("span", { class: "mono", text: state.name }),
+    ...(state.isSample ? [el("span", { class: "label warn", text: "Engineering fixture, not a real flight" })] : []),
+    c(r.validFrames, "valid frames"), c(r.crcErrors, "CRC failures"), c(r.unsupported, "unsupported"),
+    c(r.gaps, "sequence gaps"), c(r.skippedBytes, "skipped bytes"));
+  for (const b of document.querySelectorAll(".chip")) b.setAttribute("aria-pressed", String(b.dataset.check === p.check));
+  $("msg-filter").value = p.msg === null ? "" : String(p.msg);
+  $("clear-filters").hidden = p.check === "all" && p.msg === null;
+
+  const rows = currentRows(p);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  let page = Math.min(p.page, pages) - 1;
+  const sel = route.screen === "details" ? route.index : -1;
+  if (sel >= 0) { const k = rows.indexOf(sel); if (k >= 0) page = Math.floor(k / PAGE); }
+  state.page = page;
+  renderList(rows, page, sel, p);
+  $("prev-page").disabled = page === 0;
+  $("next-page").disabled = page >= pages - 1;
+  const from = rows.length ? page * PAGE + 1 : 0;
+  const to = Math.min(rows.length, (page + 1) * PAGE);
+  $("page-info").textContent = `${fmt(from)}–${fmt(to)} of ${fmt(rows.length)} rows` +
+    (r.unlistedFrames ? ` (only the first ${fmt(r.frameCount)} of ${fmt(r.validFrames)} frames are listed; the counts above include all)` : "");
+  const issues = issuePositions(r);
+  $("prev-issue").disabled = $("next-issue").disabled = issues.length === 0;
+  renderTimeline(sel);
+
+  $("analyzer-detail").hidden = !wide;
+  document.querySelector(".analyzer").classList.toggle("wide", wide);
+  if (wide) {
+    $("analyzer-detail").append($("detail"));
+    $("detail").hidden = false;
+    renderDetail(route);
+  }
+}
+
+function renderList(rows, page, sel, p) {
+  const r = state.result;
+  const idx = rowIndex(r);
+  const trs = [];
+  const end = Math.min(rows.length, (page + 1) * PAGE);
+  for (let k = page * PAGE; k < end; k++) {
+    const pos = rows.at(k);
+    const info = rowInfo(r, idx.at(pos));
+    const isSel = pos === sel;
+    const link = el("a", { href: buildHash("details", { ...p, index: pos, tab: p.tab, f: null }), "aria-current": isSel ? "true" : null,
+      "data-pos": pos, onkeydown: onRowKey, onclick: () => { if (WIDE.matches) state.keepFocusNext = true; } }, msgLabel(info.msgid));
+    const note = noteText(info);
+    trs.push(el("tr", { class: isSel ? "selected" : null, "data-off": info.off, "data-pos": pos },
+      el("td", { class: "check" }, el("span", { class: `check-${info.check}`, text: CHECK_TEXT[info.check] })),
+      el("td", { class: "msg" }, link),
+      el("td", { class: "num", text: relTime(info.ts) || "–" }),
+      el("td", { class: "num mono", text: String(info.off) }),
+      el("td", { text: `${info.sysid}:${info.compid}` }),
+      el("td", { class: "num", text: String(info.seq) }),
+      el("td", { class: info.seqIssue ? "note-seq" : null, text: note })));
+  }
+  if (!trs.length) {
+    trs.push(el("tr", {}, el("td", { colspan: 7 },
+      el("span", { text: p.check === "all" && p.msg === null ? "No frames to show." : "No rows match these filters. " }),
+      p.check === "all" && p.msg === null ? null : el("button", { type: "button", class: "btn", onclick: clearFilters, text: "Clear filters" }))));
+  }
+  const ae = document.activeElement;
+  const hadFocus = ae && ae.closest && ae.closest("#frame-table") ? ae.dataset.pos : null;
+  $("frame-table").querySelector("tbody").replaceChildren(...trs);
+  const selLink = document.querySelector('#frame-table a[aria-current="true"]');
+  if (selLink) selLink.closest("tr").scrollIntoView({ block: "nearest" });
+  // Re-rendering replaces the links; keep keyboard focus on the same row.
+  if (hadFocus !== null && hadFocus !== undefined) document.querySelector(`#frame-table a[data-pos="${hadFocus}"]`)?.focus({ preventScroll: true });
+}
+
+function onRowKey(ev) {
+  if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+  ev.preventDefault();
+  const p = state.route.params;
+  const rows = currentRows(p);
+  const k = rows.indexOf(Number(ev.currentTarget.dataset.pos)) + (ev.key === "ArrowDown" ? 1 : -1);
+  if (k < 0 || k >= rows.length) return;
+  const pos = rows.at(k);
+  if (WIDE.matches) {
+    navigate(buildHash("details", { ...p, index: pos, f: null }), { replace: true, keepFocus: true });
+  } else if (Math.floor(k / PAGE) !== state.page) {
+    navigate(buildHash("frames", { ...p, page: Math.floor(k / PAGE) + 1 }), { replace: true, keepFocus: true });
+  }
+  document.querySelector(`#frame-table a[data-pos="${pos}"]`)?.focus();
+}
+
+function setFilters(check, msg) {
+  const p = state.route.params;
+  navigate(buildHash("frames", { ...p, check, msg, page: 1 }), { replace: true, keepFocus: true });
+}
+function clearFilters() {
+  setFilters("all", null);
+  document.querySelector('.chip[data-check="all"]').focus();
+}
+
+function goToRow(pos) {
+  const p = state.route.params;
+  const rows = currentRows(p);
+  const params = rows.indexOf(pos) >= 0 ? p : { ...p, check: "all", msg: null };
+  navigate(buildHash("details", { ...params, index: pos, f: null }), { keepFocus: WIDE.matches });
+}
+
+function stepIssue(dir) {
+  const issues = issuePositions(state.result);
+  if (!issues.length) return;
+  const cur = state.route.screen === "details" ? state.route.index : -1;
+  let target = null;
+  if (dir > 0) target = issues.find((x) => x > cur);
+  else for (let i = issues.length - 1; i >= 0; i--) if (issues[i] < cur || cur < 0) { target = issues[i]; break; }
+  if (target === null || target === undefined) target = dir > 0 ? issues[0] : issues[issues.length - 1];
+  goToRow(target);
+}
+
+// ---------- timeline ----------
 function xOf(ts, off) {
   const r = state.result;
   if (timeMode() && !Number.isNaN(ts)) return (ts - r.firstTs) / (r.endTs - r.firstTs);
   return r.byteLength ? off / r.byteLength : 0;
 }
 
-// Frames per timeline bin, cached per result and bin count.
 function densityBins(count) {
   const r = state.result;
   if (r.bins && r.bins.length === count) return r.bins;
   const bins = new Uint32Array(count);
   const useTime = timeMode();
   const { ts, off } = r.frames;
-  const t0 = r.firstTs;
   const span = useTime ? r.endTs - r.firstTs : r.byteLength || 1;
   for (let i = 0; i < r.frameCount; i++) {
-    const v = useTime && !Number.isNaN(ts[i]) ? (ts[i] - t0) / span : off[i] / (r.byteLength || 1);
+    const v = useTime && !Number.isNaN(ts[i]) ? (ts[i] - r.firstTs) / span : off[i] / (r.byteLength || 1);
     const k = Math.floor(v * count);
     bins[k < 0 ? 0 : k >= count ? count - 1 : k]++;
   }
@@ -245,7 +501,7 @@ function densityBins(count) {
   return bins;
 }
 
-function renderTimeline() {
+function renderTimeline(sel) {
   const r = state.result;
   const svg = $("timeline");
   const w = Math.max(200, Math.round(svg.getBoundingClientRect().width || 800));
@@ -264,8 +520,7 @@ function renderTimeline() {
     kids.push(svgEl("rect", { class: "bin", x: (i * bw).toFixed(1), y: (bottom - bh).toFixed(1), width: Math.max(1, bw - 1).toFixed(1), height: bh.toFixed(1) }));
   });
   kids.push(svgEl("line", { class: "base", x1: 0, x2: w, y1: bottom + 0.5, y2: bottom + 0.5 }));
-  // One marker per kind and pixel column, so a capture with 100,000 issues
-  // does not create 100,000 SVG nodes.
+  // One marker per kind and pixel column, so 100,000 issues do not create 100,000 SVG nodes.
   const drawn = new Set();
   for (const it of r.issues) {
     const x = (xOf(it.ts, it.off) * (w - 8) + 4).toFixed(1);
@@ -278,14 +533,17 @@ function renderTimeline() {
     if (it.kind === "gap") g.append(svgEl("rect", { x: x - 4, y: 2, width: 8, height: 8 }));
     kids.push(g);
   }
-  const cur = selectedPoint();
-  if (cur) {
-    const x = (xOf(cur.ts, cur.off) * (w - 8) + 4).toFixed(1);
-    kids.push(svgEl("line", { class: "cursor", x1: x, x2: x, y1: 0, y2: h }));
+  if (sel >= 0) {
+    const ref = rowIndex(r).at(sel);
+    if (ref) {
+      const info = rowInfo(r, ref);
+      const x = (xOf(info.ts, info.off) * (w - 8) + 4).toFixed(1);
+      kids.push(svgEl("line", { class: "cursor", x1: x, x2: x, y1: 0, y2: h }));
+    }
   }
   svg.replaceChildren(...kids);
   const span = timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} seconds` : `${fmt(r.byteLength)} bytes`;
-  $("timeline-desc").textContent = `Timeline over ${span}: ${fmt(r.validFrames)} valid frames, ${fmt(r.crcErrors)} CRC errors, ${fmt(r.unsupported)} unsupported message ids, ` +
+  $("timeline-desc").textContent = `Timeline over ${span}: ${fmt(r.validFrames)} valid frames, ${fmt(r.crcErrors)} CRC failures, ${fmt(r.unsupported)} unsupported message ids, ` +
     `${fmt(r.gaps)} sequence gaps, ${fmt(r.duplicates + r.reorders)} duplicate or out-of-order sequence numbers. Use Previous issue and Next issue to step through them.`;
   $("axis-start").textContent = timeMode() ? "0 s" : "0";
   $("axis-unit").textContent = timeMode() ? "time since first frame" : "byte offset (raw streams have no timestamps)";
@@ -298,30 +556,22 @@ function renderTimeline() {
   ].join(" ").trim();
 }
 
-function selectedPoint() {
-  const r = state.result;
-  if (!r || !state.sel) return null;
-  if (state.sel.t === "f") return { ts: r.frames.ts[state.sel.i], off: r.frames.off[state.sel.i] };
-  const it = r.issues[state.sel.i];
-  return it ? { ts: it.ts, off: it.off } : null;
-}
-
 function onTimelineClick(ev) {
   const r = state.result;
   if (!r) return;
   const rect = ev.currentTarget.getBoundingClientRect();
   const fx = (ev.clientX - rect.left) / rect.width;
-  const px = (v) => v * rect.width;
+  const idx = rowIndex(r);
   let best = -1;
   let bestD = 8;
   r.issues.forEach((it, i) => {
-    const d = Math.abs(px(xOf(it.ts, it.off)) - px(fx));
+    const d = Math.abs((xOf(it.ts, it.off) - fx) * rect.width);
     if (d <= bestD) { best = i; bestD = d; }
   });
   if (best >= 0) {
-    if (state.view !== "issues") setView("issues", false);
-    select({ t: "i", i: best }, { scroll: true });
-    return;
+    const it = r.issues[best];
+    const pos = CANDIDATE_KINDS.has(it.kind) ? idx.positionOf({ t: "i", i: best }) : idx.positionOf({ t: "f", i: it.frame });
+    if (pos >= 0) { goToRow(pos); return; }
   }
   if (!r.frameCount) return;
   let lo = 0;
@@ -330,374 +580,356 @@ function onTimelineClick(ev) {
     const mid = (lo + hi) >> 1;
     if (xOf(r.frames.ts[mid], r.frames.off[mid]) < fx) lo = mid + 1; else hi = mid;
   }
-  if (state.view !== "frames" || (state.msg !== null && r.frames.msgid[lo] !== state.msg)) {
-    state.msg = null;
-    setView("frames", false);
-    renderMessages();
-  }
-  select({ t: "f", i: lo }, { scroll: true });
+  goToRow(idx.positionOf({ t: "f", i: lo }));
 }
 
-// Rows of the list for the current view and filter: frame indices or issue
-// indices. The unfiltered frame list of a large capture is not materialised.
-function listRows() {
-  const r = state.result;
-  if (state.rows) return state.rows;
-  if (state.view === "frames" && state.msg === null) {
-    const n = r.frameCount;
-    state.rows = { length: n, at: (k) => k, indexOf: (i) => (i >= 0 && i < n ? i : -1),
-      slice: (a, b) => Array.from({ length: Math.max(0, Math.min(b, n) - a) }, (_, k) => a + k) };
-    return state.rows;
+// ---------- Frame details: summary, CRC, field tree, bytes ----------
+function renderDetailsScreen(route) {
+  $("details-host").append($("detail"));
+  $("detail").hidden = false;
+  if (!state.result) {
+    $("h-details").textContent = "Frame details";
+    $("detail-body").hidden = true;
+    framesEmpty($("detail-empty"));
+    return;
   }
-  const out = [];
-  if (state.view === "frames") {
-    const ids = r.frames.msgid;
-    for (let i = 0; i < r.frameCount; i++) if (ids[i] === state.msg) out.push(i);
+  renderDetail(route);
+}
+
+function renderDetail(route) {
+  const r = state.result;
+  const wide = WIDE.matches;
+  const empty = $("detail-empty");
+  const body = $("detail-body");
+  const idx = rowIndex(r);
+  const ref = route.screen === "details" ? idx.at(route.index) : null;
+  if (!ref) {
+    body.hidden = true;
+    empty.hidden = false;
+    $("h-details").textContent = "Frame details";
+    empty.replaceChildren(route.screen === "details"
+      ? el("p", {}, `There is no row ${fmt(route.index)} in ${state.name} (it has ${fmt(idx.length)} rows). `, el("a", { href: buildHash("frames", route.params), text: "Back to Frames" }))
+      : el("p", { class: "muted", text: "Select a row to see its header, payload fields, CRC and bytes here. Selecting a field highlights its bytes; clicking a byte selects its field." }));
+    return;
+  }
+  empty.hidden = true;
+  body.hidden = false;
+  const info = rowInfo(r, ref);
+  const a = anatomy(r, state.bytes, state.parser, info);
+  state.anatomy = a;
+  const title = `${msgLabel(info.msgid)} at offset ${fmt(info.off)}`;
+  $("h-details").textContent = title;
+  $("detail-title").textContent = title;
+  $("detail-title").hidden = !wide;
+
+  const d = (k, v, cls) => el("div", {}, el("dt", { text: k }), el("dd", { class: cls || null }, v));
+  $("detail-summary").replaceChildren(
+    d("Check", el("span", { class: `check-${info.check}`, text: CHECK_TEXT[info.check] })),
+    d("Message", `${msgLabel(info.msgid)} (id ${info.msgid})`),
+    d("Offset", el("span", { class: "mono", text: String(info.off) })),
+    d("Length", `${info.flen} bytes`),
+    d("Time", relTime(info.ts) ? `${relTime(info.ts)} s` : "no timestamp"),
+    d("Sys:Comp", `${info.sysid}:${info.compid}`),
+    d("Seq", String(info.seq)),
+    d("Row", fmt(route.index)));
+
+  const cc = $("crc-compare");
+  if (a.crc) {
+    const computed = a.crc.computed === null ? "not possible" : hexN(a.crc.computed, 4);
+    const verdict = a.crc.computed === null ? ["na", "Not checked: no CRC_EXTRA for this message id"]
+      : a.crc.computed === a.crc.wire ? ["ok", "Match: valid CRC"] : ["bad", "Mismatch: CRC failed"];
+    cc.replaceChildren(
+      el("div", {}, el("span", { class: "k", text: "Wire CRC" }), el("span", { class: "v", text: hexN(a.crc.wire, 4) })),
+      el("div", {}, el("span", { class: "k", text: "Computed CRC" }), el("span", { class: "v", text: computed })),
+      el("div", { class: `verdict ${verdict[0]}` }, el("span", { class: "k", text: "Result" }), el("span", { class: "v", text: verdict[1] })));
   } else {
-    r.issues.forEach((it, i) => { if (state.msg === null || it.msgid === state.msg) out.push(i); });
+    cc.replaceChildren(el("div", {}, el("span", { class: "k", text: "CRC" }), el("span", { class: "v", text: "cut off at the end of the capture" })));
   }
-  state.rows = out;
-  return out;
-}
 
-const ISSUE_TEXT = { crc: "CRC error", gap: "Sequence gap", duplicate: "Duplicate seq", reorder: "Out of order",
-  unsupported: "Unsupported id", reject: "Bad flags" };
-const SEQ_KINDS = new Set(["gap", "duplicate", "reorder"]);
+  const notes = [];
+  if (info.iflags & 1) notes.push(el("p", { class: "note", text: "Signed frame: signature present; not verified. The parser carries the 13 signature bytes without checking them (that needs the link's secret key)." }));
+  if (info.seqIssue) {
+    const s = info.seqIssue;
+    const who = `System ${s.sysid} component ${s.compid}`;
+    const text = s.kind === "gap"
+      ? `${who} went from seq ${s.prevSeq} to ${s.seq}. Assuming one fully observed channel and in-order arrival, about ${s.missing} frame${s.missing === 1 ? " is" : "s are"} missing before this one. This is an estimate from sequence numbers (a late frame looks the same), not a CRC failure.`
+      : s.kind === "duplicate" ? `${who} sent seq ${s.seq} twice in a row (a duplicate or retransmitted frame). Not counted as missing.`
+        : `${who} went back from seq ${s.prevSeq} to ${s.seq} (${s.back} back). ` + (s.reset ? "A step this large more likely means the sender restarted." : "Most likely a late frame delivered out of order. Not counted as missing.");
+    notes.push(el("p", { class: "note warn" }, el("strong", { text: `${SEQ_TEXT[s.kind]}. ` }), text));
+  }
+  if (info.check === "crc") notes.push(el("p", { class: "note bad", text: "The header looked valid but the checksum over header and payload does not match, so the frame was discarded. The parser then looked for the next 0xFD inside these bytes, so a valid frame hidden in them is still found." }));
+  if (info.check === "unsupported") notes.push(el("p", { class: "note", text: `Message id ${info.msgid} is not in the common dialect (it may come from another dialect, such as ardupilotmega, or be noise). Without its CRC_EXTRA the checksum cannot be checked, so it is unsupported, not counted as corrupt.` }));
+  if (info.check === "reject") notes.push(el("p", { class: "note", text: `Incompat flags ${hexN(info.iflags, 2)} include bits other than "signed", which this parser does not support.` }));
+  $("detail-notes").replaceChildren(...notes);
 
-function issueDetail(it) {
-  if (it.kind === "gap") return `seq ${it.prevSeq} to ${it.seq}, ~${it.missing} missing if in order`;
-  if (it.kind === "duplicate") return `seq ${it.seq} repeated`;
-  if (it.kind === "reorder") return `seq ${it.seq} after ${it.prevSeq}: ${it.reset ? "likely sender restart" : "late frame"}`;
-  if (it.kind === "crc") return `${it.flen} bytes, checksum does not match`;
-  return it.kind === "unsupported" ? `message id ${it.msgid} not in the common dialect; not checked` : `incompat flags ${hexN(it.iflags, 2)}`;
-}
-
-function renderList() {
-  const r = state.result;
-  const rows = listRows();
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-  state.page = Math.min(state.page, pages - 1);
-  const wrap = $("list-table").parentElement;
-  wrap.classList.toggle("no-time", !timeMode());
-  const head = state.view === "frames"
-    ? ["No.", "Time (s)", "Offset", "Message", "Sys:Comp", "Seq", "Len", "Note"]
-    : ["No.", "Time (s)", "Offset", "Issue", "Message", "Sys:Comp", "Detail"];
-  const numeric = new Set(["No.", "Time (s)", "Offset", "Seq", "Len"]);
-  $("list-table").querySelector("thead tr").replaceChildren(...head.map((hd) =>
-    el("th", { scope: "col", class: [numeric.has(hd) ? "num" : "", hd === "Time (s)" ? "col-time" : ""].join(" ").trim() || null, text: hd })));
-
-  const gapAt = new Map();
-  if (state.view === "frames") for (const it of r.issues) if (SEQ_KINDS.has(it.kind)) gapAt.set(it.frame, it);
-  const trs = [];
-  for (const idx of rows.slice(state.page * PAGE, state.page * PAGE + PAGE)) {
-    const isSel = state.sel && state.sel.t === (state.view === "frames" ? "f" : "i") && state.sel.i === idx;
-    const label = state.view === "frames" ? "Select frame " : "Select issue ";
-    const btn = el("button", { type: "button", class: "rowbtn", "data-idx": idx, "aria-current": isSel ? "true" : null,
-      onclick: () => select({ t: state.view === "frames" ? "f" : "i", i: idx }, { focus: true }), onkeydown: onRowKey },
-    el("span", { class: "sr-only", text: label }), String(idx + 1));
-    let cells;
-    if (state.view === "frames") {
-      const f = frameAt(r, idx);
-      const gap = gapAt.get(idx);
-      cells = [
-        el("td", { class: "num col-time", text: relTime(f.ts) }),
-        el("td", { class: "num", text: fmt(f.off) }),
-        el("td", { text: msgLabel(f.msgid) }),
-        el("td", { class: "mono", text: `${f.sysid}:${f.compid}` }),
-        el("td", { class: "num", text: f.seq }),
-        el("td", { class: "num", text: f.flen }),
-        el("td", { class: gap ? "note-gap" : null, text: gap ? `${ISSUE_TEXT[gap.kind]}: ${issueDetail(gap)}` : (f.iflags & 1 ? "signature present; not verified" : "") }),
-      ];
-    } else {
-      const it = r.issues[idx];
-      cells = [
-        el("td", { class: "num col-time", text: relTime(it.ts) }),
-        el("td", { class: "num", text: fmt(it.off) }),
-        el("td", {}, el("span", { class: `kind ${it.kind}`, text: ISSUE_TEXT[it.kind] })),
-        el("td", { text: msgLabel(it.msgid) }),
-        el("td", { class: "mono", text: `${it.sysid}:${it.compid}` }),
-        el("td", { text: issueDetail(it) }),
-      ];
+  // Under the H1 on the narrow details screen the groups are h2; under the detail h2 in the analyzer, h3.
+  const hTag = wide ? "h3" : "h2";
+  const groupTable = (g) => {
+    const kids = [el(hTag, { text: g.title })];
+    if (g.description) kids.push(el("p", { class: "muted small", text: g.description }));
+    if (g.fields.length) {
+      kids.push(el("div", { class: "table-wrap" }, el("table", { class: "dense" },
+        el("caption", { class: "sr-only", text: `${g.title} fields` }),
+        el("thead", {}, el("tr", {}, ...["Field", "Value", "Reading", "Bytes"].map((h) => el("th", { scope: "col", text: h })))),
+        el("tbody", {}, ...g.fields.map((f) => el("tr", { class: f.trimmed ? "trimmed" : null },
+          el("td", {}, el("button", { type: "button", class: "fieldbtn", "data-key": f.key, "aria-pressed": "false", onclick: () => selectField(f.key, true) }, f.name)),
+          el("td", { class: /^0x/.test(f.value) ? "val mono" : "val", text: f.value + (f.units ? ` ${f.units}` : "") }),
+          el("td", { text: f.trimmed ? [f.reading, "not sent (trimmed zero bytes)"].filter(Boolean).join("; ") : f.reading }),
+          el("td", { class: "bytes", text: byteRange(f.from - a.off, f.to - 1 - a.off) })))))));
+    } else if (g.note) {
+      kids.push(el("p", { class: "note", text: g.note }));
     }
-    trs.push(el("tr", { class: isSel ? "selected" : null }, el("td", { class: "num" }, btn), ...cells));
+    if (g.trimmed) kids.push(el("p", { class: "note", text: `The sender trimmed trailing zero bytes (MAVLink v2): ${a.plen} of ${g.length} payload bytes were sent; the rest read as zero.` }));
+    return kids;
+  };
+  const tree = (ids) => el("div", { class: "tree" }, ...ids.map((id) => a.groups.find((g) => g.id === id)).filter(Boolean).flatMap(groupTable));
+  // The analyzer reads header fields first, as a packet analyzer's tree does; the tlog record follows.
+  $("panel-header").replaceChildren(tree(wide ? ["header", "ts", "crc", "sig"] : ["ts", "header", "crc", "sig"]));
+  $("panel-decoded").replaceChildren(tree(["payload"]));
+
+  // Tabs on narrow screens; all three panes at once on wide screens.
+  const tab = route.params.tab;
+  for (const t of TABS) {
+    const btn = $(`tab-${t}`);
+    const panel = $(`panel-${t}`);
+    const on = t === tab;
+    btn.setAttribute("aria-selected", String(on));
+    btn.tabIndex = on ? 0 : -1;
+    if (wide) { panel.removeAttribute("role"); panel.removeAttribute("aria-labelledby"); panel.hidden = false; panel.removeAttribute("tabindex"); }
+    else { panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", `tab-${t}`); panel.hidden = !on; }
   }
-  if (!trs.length) {
-    trs.push(el("tr", {}, el("td", { colspan: head.length, class: "muted",
-      text: state.view === "issues" ? "No issues: every frame passed its CRC and no sequence numbers were skipped." : "No frames to show." })));
-  }
-  $("list-table").querySelector("tbody").replaceChildren(...trs);
-  const from = rows.length ? state.page * PAGE + 1 : 0;
-  const to = Math.min(rows.length, (state.page + 1) * PAGE);
-  $("page-info").textContent = `${fmt(from)}–${fmt(to)} of ${fmt(rows.length)} ${state.view === "frames" ? "frames" : "issues"}` +
-    (state.view === "frames" && r.unlistedFrames && state.msg === null ? ` (only the first ${fmt(r.frameCount)} of ${fmt(r.validFrames)} frames are listed; the counts above include all)` : "") +
-    (state.view === "issues" && r.unlistedIssues ? ` (only the first ${fmt(r.issues.length)} of ${fmt(r.issues.length + r.unlistedIssues)} issues are listed; the counts above include all)` : "");
-  $("prev-page").disabled = state.page === 0;
-  $("next-page").disabled = state.page >= pages - 1;
-  $("view-frames").setAttribute("aria-pressed", String(state.view === "frames"));
-  $("view-issues").setAttribute("aria-pressed", String(state.view === "issues"));
-  $("view-issues").textContent = `Issues (${fmt(r.issues.length + r.unlistedIssues)})`;
-  $("filter").hidden = state.msg === null;
-  $("filter-text").textContent = state.msg === null ? "" : `Showing ${msgLabel(state.msg)} only`;
-  $("prev-issue").disabled = $("next-issue").disabled = r.issues.length === 0;
+  // Decoded payload fields come before header fields in the narrow Decoded tab; on wide
+  // screens the tree reads header first, as in a packet analyzer.
+  $("panel-header").parentElement.classList.toggle("header-first", wide);
+  if (wide) $("panel-header").parentElement.prepend($("panel-header"));
+  else $("panel-header").parentElement.append($("panel-header"));
+
+  renderHex(a);
+  const key = route.params.f && a.fields.some((f) => f.key === route.params.f) ? route.params.f : null;
+  selectField(key, false);
+  $("export-status").textContent = "";
+  const rows = currentRows(route.params);
+  const k = rows.indexOf(route.index);
+  $("prev-row").disabled = k <= 0 && route.index <= 0;
+  $("next-row").disabled = k >= 0 ? k >= rows.length - 1 : route.index >= idx.length - 1;
 }
 
-function onRowKey(ev) {
-  if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
-  ev.preventDefault();
-  const rows = listRows();
-  const k = rows.indexOf(Number(ev.currentTarget.dataset.idx)) + (ev.key === "ArrowDown" ? 1 : -1);
-  if (k < 0 || k >= rows.length) return;
-  const next = rows.at(k);
-  select({ t: state.view === "frames" ? "f" : "i", i: next }, { focus: true, scroll: true });
+// Byte positions relative to the frame's start byte ("−8 to −1" for the tlog timestamp).
+function byteRange(from, last) {
+  const n = (v) => (v < 0 ? `−${-v}` : String(v));
+  if (last < from) return "–";
+  if (last === from) return n(from);
+  return from < 0 ? `${n(from)} to ${n(last)}` : `${n(from)}–${n(last)}`;
 }
 
-function setView(view, render = true) {
-  state.view = view;
-  state.rows = null;
-  state.page = 0;
-  if (render) { renderList(); writeHash(); }
-}
-
-function setFilter(msgid) {
-  state.msg = msgid;
-  state.rows = null;
-  state.page = 0;
-  renderMessages();
-  renderList();
-  writeHash();
-  // The table was re-rendered; keep keyboard focus on the button just used.
-  const again = document.querySelector(`#msg-table .msgbtn[data-msgid="${msgid === null ? state.lastFilter : msgid}"]`);
-  if (again && document.activeElement === document.body) again.focus();
-  if (msgid !== null) state.lastFilter = msgid;
-}
-
-function select(sel, opts = {}) {
-  state.sel = sel;
-  const rows = listRows();
-  const kind = state.view === "frames" ? "f" : "i";
-  if (sel.t === kind) {
-    const pos = rows.indexOf(sel.i);
-    if (pos >= 0) state.page = Math.floor(pos / PAGE);
-  }
-  renderList();
-  renderTimeline();
-  renderDetail();
-  if (!opts.quiet) writeHash();
-  const btn = document.querySelector(`#list-table .rowbtn[aria-current="true"]`);
-  if (btn && opts.focus) btn.focus();
-  if (btn && opts.scroll) btn.closest("tr").scrollIntoView({ block: "nearest" });
-}
-
-function stepIssue(dir) {
-  const r = state.result;
-  if (!r || !r.issues.length) return;
-  let target;
-  if (state.sel && state.sel.t === "i") target = state.sel.i + dir;
-  else {
-    const f = state.sel ? state.sel.i : -1;
-    if (dir > 0) target = r.issues.findIndex((it) => it.frame > f);
-    else target = r.issues.findLastIndex((it) => it.frame <= f);
-  }
-  if (target < 0 || target >= r.issues.length) target = dir > 0 ? 0 : r.issues.length - 1;
-  if (state.msg !== null && r.issues[target].msgid !== state.msg) { state.msg = null; renderMessages(); }
-  if (state.view !== "issues") setView("issues", false);
-  state.rows = null;
-  select({ t: "i", i: target }, { scroll: true });
-}
-
-// ---------- hex and decoded panes ----------
-function renderHex(start, end, segs) {
+// 16 bytes per row like a packet analyzer; 8 or 4 when a row (with the ASCII column) does not fit the pane.
+function renderHex(a, perRow = 16) {
   const bytes = state.bytes;
   const pre = $("hex");
+  const start = a.start;
+  const end = a.end;
   if (start >= end) { pre.textContent = "No bytes."; return; }
-  const frag = document.createDocumentFragment();
+  const segs = [];
+  for (const g of a.groups) {
+    const cls = { ts: "seg-ts", header: "seg-hdr", payload: "seg-pay", crc: "seg-crc", sig: "seg-sig" }[g.id];
+    const name = { ts: "tlog timestamp", header: "header", payload: "payload", crc: "CRC", sig: "signature" }[g.id];
+    const from = g.id === "payload" ? a.off + 10 : Math.min(...g.fields.map((f) => f.from));
+    const to = g.id === "payload" ? a.off + 10 + a.plen : Math.max(...g.fields.map((f) => f.to));
+    if (Number.isFinite(from) && to > from) segs.push({ from, to: Math.min(to, end), cls, name });
+  }
   const segOf = (o) => segs.find((s) => o >= s.from && o < s.to);
-  for (let row = start; row < end; row += 16) {
+  const frag = document.createDocumentFragment();
+  const base = start - (start % perRow);
+  for (let row = base; row < end; row += perRow) {
     frag.append(el("span", { class: "off", text: row.toString(16).padStart(8, "0") }), "  ");
     let ascii = "";
-    for (let o = row; o < row + 16; o++) {
-      if (o < end) {
+    for (let o = row; o < row + perRow; o++) {
+      if (o >= start && o < end) {
         const s = segOf(o);
-        // Screen readers get the region name where the region starts; sighted users get the underline pattern.
+        // Screen readers get the region name where it starts; sighted users get the underline pattern.
         if (s && (o === s.from || o === start)) frag.append(el("span", { class: "sr-only", text: `${s.name}: ` }));
-        frag.append(el("span", { class: "b " + (s ? s.cls : ""), title: s ? s.name : null, text: hex2(bytes[o]) }));
+        frag.append(el("span", { class: "b " + (s ? s.cls : ""), "data-o": o, title: s ? s.name : null, text: hex2(bytes[o]) }));
         ascii += bytes[o] >= 0x20 && bytes[o] < 0x7f ? String.fromCharCode(bytes[o]) : ".";
       } else {
         frag.append("  ");
+        ascii += " ";
       }
-      frag.append(o === row + 7 ? "  " : " ");
+      frag.append(o === row + 7 && perRow === 16 ? "  " : " ");
     }
     frag.append(el("span", { class: "ascii", text: " " + ascii }), "\n");
   }
   pre.replaceChildren(frag);
+  pre.setAttribute("aria-label", `Bytes ${fmt(start)} to ${fmt(end - 1)} in hexadecimal`);
+  if (perRow > 4 && pre.clientWidth && pre.scrollWidth > pre.clientWidth + 1) renderHex(a, perRow / 2);
 }
 
-function table(caption, head, rows) {
-  return el("table", { class: "dense" },
-    el("caption", { class: "sr-only", text: caption }),
-    el("thead", {}, el("tr", {}, ...head.map((h) => el("th", { scope: "col", text: h })))),
-    el("tbody", {}, ...rows.map((cells) => el("tr", {}, ...cells.map((c, i) => el("td", { class: i === 1 ? "val" : null, text: c }))))));
-}
-
-function headerRows(off, flen) {
-  const b = state.bytes;
-  const plen = b[off + 1];
-  const msgid = b[off + 7] | (b[off + 8] << 8) | (b[off + 9] << 16);
-  const signed = b[off + 2] & 1;
-  const rows = [];
-  if (state.result.format === "tlog" && off >= 8) {
-    let us = 0;
-    for (let i = 0; i < 8; i++) us = us * 256 + b[off - 8 + i];
-    const iso = us >= 946684800e6 && us <= 4102444800e6 ? new Date(us / 1000).toISOString() : "not a plausible time";
-    rows.push(["tlog timestamp", `${us} µs (${iso})`, "-8 to -1"]);
-  }
-  rows.push(["Start byte", hexN(b[off], 2), "0"], ["Payload length", String(plen), "1"],
-    ["Incompat flags", `${hexN(b[off + 2], 2)}${signed ? " (signature present; not verified)" : ""}`, "2"], ["Compat flags", hexN(b[off + 3], 2), "3"],
-    ["Sequence", String(b[off + 4]), "4"], ["System ID", String(b[off + 5]), "5"], ["Component ID", String(b[off + 6]), "6"],
-    ["Message ID", `${msgid} (${msgLabel(msgid)})`, "7 to 9"]);
-  let crcInfo = null;
-  if (flen >= 12 + plen && off + 12 + plen <= b.length) {
-    const c = 10 + plen;
-    const received = b[off + c] | (b[off + c + 1] << 8);
-    const computed = state.parser.crc(b.subarray(off, off + c + 2));
-    crcInfo = { received, computed };
-    rows.push(["CRC", `${hexN(received, 4)} received, ${computed === null ? "cannot be computed" : hexN(computed, 4) + " computed"}`, `${c} to ${c + 1}`]);
-    if (signed) rows.push(["Signature", "signature present; not verified (13 bytes: link id, timestamp, hash)", `${c + 2} to ${c + 14}`]);
-  }
-  return { rows, crcInfo, plen, msgid };
-}
-
-function segments(off, plen, signed, flen) {
-  const segs = [];
-  if (state.result.format === "tlog" && off >= 8) segs.push({ from: off - 8, to: off, cls: "seg-ts", name: "tlog timestamp" });
-  segs.push({ from: off, to: off + 10, cls: "seg-hdr", name: "header" });
-  if (flen > 10) {
-    segs.push({ from: off + 10, to: off + 10 + plen, cls: "seg-pay", name: "payload" });
-    segs.push({ from: off + 10 + plen, to: off + 12 + plen, cls: "seg-crc", name: "CRC" });
-    if (signed) segs.push({ from: off + 12 + plen, to: off + 25 + plen, cls: "seg-sig", name: "signature" });
-  }
-  return segs;
-}
-
-function renderDetail() {
-  const r = state.result;
-  const box = $("decoded");
-  if (!r || !state.sel) {
-    box.replaceChildren(el("p", { class: "muted pad", text: "Select a frame or an issue." }));
-    $("hex").textContent = "Select a frame.";
-    return;
-  }
-  let off;
-  let flen;
-  const kids = [];
-  let issue = null;
-  let frame = null;
-  if (state.sel.t === "i") {
-    issue = r.issues[state.sel.i];
-    if (SEQ_KINDS.has(issue.kind)) frame = frameAt(r, issue.frame);
-  } else {
-    frame = frameAt(r, state.sel.i);
-    issue = r.issues.find((it) => SEQ_KINDS.has(it.kind) && it.frame === state.sel.i) || null;
-  }
-  if (frame) {
-    off = frame.off;
-    flen = frame.flen;
-    kids.push(el("p", { class: "lead" }, el("strong", { text: msgLabel(frame.msgid) }),
-      ` (id ${frame.msgid}), frame ${fmt(frame.index + 1)}: ${flen} bytes at offset ${fmt(off)}` +
-      (relTime(frame.ts) ? `, t = ${relTime(frame.ts)} s` : "")));
-    if (frame.iflags & 1) {
-      kids.push(el("p", { class: "note", text: "Signed frame: signature present; not verified. This inspector, like the parser, carries the 13 signature bytes without checking them (that needs the link's secret key)." }));
-    }
-    if (issue && SEQ_KINDS.has(issue.kind)) {
-      const who = `System ${issue.sysid} component ${issue.compid}`;
-      const text = issue.kind === "gap"
-        ? `${who} went from seq ${issue.prevSeq} to ${issue.seq}. Assuming one fully observed channel and in-order arrival, about ${issue.missing} ` +
-          `frame${issue.missing === 1 ? " is" : "s are"} missing before this one. This is an estimate from sequence numbers ` +
-          "(a late frame looks the same), not a CRC error; CRC errors are counted separately."
-        : issue.kind === "duplicate"
-          ? `${who} sent seq ${issue.seq} twice in a row (a duplicate or retransmitted frame). Not counted as missing.`
-          : `${who} went back from seq ${issue.prevSeq} to ${issue.seq} (${issue.back} back). ` +
-            (issue.reset ? "A step this large more likely means the sender restarted; counting continues from here."
-              : "Most likely a late frame delivered out of order. Not counted as missing.");
-      kids.push(el("p", { class: "note warn" }, el("span", { class: `kind ${issue.kind}`, text: `${ISSUE_TEXT[issue.kind]}. ` }), text));
-    }
-  } else {
-    off = issue.off;
-    flen = Math.min(issue.flen, r.byteLength - off);
-    const what = issue.kind === "crc"
-      ? "The header looked valid but the checksum over header and payload does not match, so the frame was discarded."
-      : issue.kind === "unsupported"
-        ? `Message id ${issue.msgid} is not in the common dialect (it may come from another dialect, such as ardupilotmega, or be noise). ` +
-          "Without its CRC_EXTRA the checksum cannot be checked, so the frame is skipped as unsupported, not counted as corrupt."
-        : `Incompat flags ${hexN(issue.iflags, 2)} include bits other than "signed", which this parser does not support.`;
-    kids.push(el("p", { class: "lead" }, el("span", { class: `kind ${issue.kind}`, text: ISSUE_TEXT[issue.kind] }),
-      ` at offset ${fmt(off)}` + (relTime(issue.ts) ? `, t = ${relTime(issue.ts)} s` : "")));
-    kids.push(el("p", { class: `note ${issue.kind === "crc" ? "bad" : ""}`, text: what +
-      " The parser then looked for the next 0xFD inside these bytes, so a valid frame hidden in them is still found." }));
-  }
-  const b = state.bytes;
-  const signed = b[off + 2] & 1;
-  const h = headerRows(off, flen);
-  if (h.crcInfo && issue && issue.kind === "crc" && h.crcInfo.computed !== null) {
-    kids.push(el("p", { class: "note bad", text: `CRC received ${hexN(h.crcInfo.received, 4)}, computed ${hexN(h.crcInfo.computed, 4)} ` +
-      "by mavframe_crc16() in the WebAssembly module." }));
-  }
-  kids.push(el("h3", { text: "Header" }), table("Frame header fields", ["Field", "Value", "Bytes"], h.rows));
-  if (frame) {
-    const payload = b.subarray(off + 10, off + 10 + h.plen);
-    const dec = decodePayload(frame.msgid, payload);
-    if (dec) {
-      kids.push(el("h3", { text: `Payload: ${dec.name}` }));
-      kids.push(el("p", { class: "lead muted small", text: dec.description }));
-      kids.push(table(`${dec.name} payload fields`, ["Field", "Value", "Units", "Reading"],
-        dec.fields.map((f) => [f.name + (f.ext ? " (extension)" : ""), formatValue(f.value), f.units || "", f.meaning || ""])));
-      if (dec.trimmed) kids.push(el("p", { class: "note", text: `The sender trimmed trailing zero bytes (MAVLink v2): ${h.plen} of ${dec.length} payload bytes were sent; the rest read as zero.` }));
-    } else {
-      kids.push(el("h3", { text: "Payload" }), el("p", { class: "note", text:
-        `${h.plen} payload bytes, shown in the Bytes pane. Fields are decoded only for HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD.` }));
+// Linked selection: a field highlights its bytes; a byte selects its field.
+function selectField(key, fromUser) {
+  const a = state.anatomy;
+  if (!a) return;
+  const f = key ? a.fields.find((x) => x.key === key) : null;
+  for (const b of document.querySelectorAll("#detail .fieldbtn")) b.setAttribute("aria-pressed", String(!!f && b.dataset.key === f.key));
+  for (const s of document.querySelectorAll("#hex .b.hl")) s.classList.remove("hl");
+  let firstByte = null;
+  if (f) {
+    for (let o = f.from; o < f.to; o++) {
+      const s = document.querySelector(`#hex .b[data-o="${o}"]`);
+      if (s) { s.classList.add("hl"); firstByte ??= s; }
     }
   }
-  box.replaceChildren(...kids);
-  const end = Math.min(r.byteLength, off + flen);
-  renderHex(r.format === "tlog" && off >= 8 ? off - 8 : off, end, segments(off, h.plen, signed, flen));
-  $("hex").setAttribute("aria-label", `Bytes ${fmt(off)} to ${fmt(end - 1)} in hexadecimal`);
+  if (!fromUser) return;
+  if (firstByte && !$("panel-bytes").hidden) firstByte.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const route = state.route;
+  history.replaceState(null, "", buildHash("details", { ...route.params, index: route.index, f: f ? f.key : null }));
+  state.route = parseHash(location.hash);
+  state.lastHash = location.hash;
+  const n = f ? f.to - f.from : 0;
+  $("field-status").textContent = !f ? "" : n
+    ? `${f.name}: ${n} byte${n === 1 ? "" : "s"} at offset ${fmt(f.from)} highlighted${$("panel-bytes").hidden ? " in the Bytes tab" : ""}.`
+    : `${f.name}: not sent (trimmed zero bytes).`;
 }
 
-// ---------- URL state (only for the built-in sample, the one capture a link can reproduce) ----------
-function writeHash() {
-  if (!state.isSample) {
-    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
-    return;
-  }
-  const p = new URLSearchParams();
-  p.set("view", state.view);
-  if (state.msg !== null) p.set("msg", String(state.msg));
-  if (state.sel) p.set("sel", state.sel.t + state.sel.i);
-  history.replaceState(null, "", "#" + p.toString());
+function onHexClick(ev) {
+  const span = ev.target.closest(".b");
+  if (!span || !state.anatomy) return;
+  const o = Number(span.dataset.o);
+  const hits = state.anatomy.fields.filter((f) => o >= f.from && o < f.to).sort((x, y) => (x.to - x.from) - (y.to - y.from));
+  if (hits.length) selectField(hits[0].key, true);
 }
 
-function applyHash(hash) {
-  const r = state.result;
-  const p = new URLSearchParams(hash.replace(/^#/, ""));
-  state.view = p.get("view") === "issues" ? "issues" : "frames";
-  const msg = Number.parseInt(p.get("msg") ?? "", 10);
-  state.msg = Number.isInteger(msg) && r.messages.some((m) => m.msgid === msg) ? msg : null;
-  state.rows = null;
-  const m = /^([fi])(\d{1,9})$/.exec(p.get("sel") || "");
-  if (m) {
-    const i = Number(m[2]);
-    if ((m[1] === "f" && i < r.frameCount) || (m[1] === "i" && i < r.issues.length)) {
-      state.sel = { t: m[1], i };
-      const pos = listRows().indexOf(i);
-      if (pos >= 0 && m[1] === (state.view === "frames" ? "f" : "i")) state.page = Math.floor(pos / PAGE);
-    }
-  }
+function onHexKey(ev) {
+  if ((ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") || !state.anatomy) return;
+  ev.preventDefault();
+  const fields = state.anatomy.fields.filter((f) => f.to > f.from).sort((x, y) => x.from - y.from || x.to - y.to);
+  const cur = fields.findIndex((f) => f.key === state.route.params.f);
+  const next = cur < 0 ? (ev.key === "ArrowRight" ? 0 : fields.length - 1) : Math.max(0, Math.min(fields.length - 1, cur + (ev.key === "ArrowRight" ? 1 : -1)));
+  if (fields[next]) selectField(fields[next].key, true);
+}
+
+function selectTab(t, focus) {
+  const route = state.route;
+  navigate(buildHash("details", { ...route.params, index: route.index, tab: t }), { replace: true, keepFocus: true });
+  if (focus) $(`tab-${t}`).focus();
+}
+
+function onTabKey(ev) {
+  const i = TABS.indexOf(ev.currentTarget.id.slice(4));
+  let j = null;
+  if (ev.key === "ArrowRight") j = (i + 1) % TABS.length;
+  else if (ev.key === "ArrowLeft") j = (i + TABS.length - 1) % TABS.length;
+  else if (ev.key === "Home") j = 0;
+  else if (ev.key === "End") j = TABS.length - 1;
+  if (j === null) return;
+  ev.preventDefault();
+  selectTab(TABS[j], true);
+}
+
+function stepRow(dir) {
+  const route = state.route;
+  const rows = currentRows(route.params);
+  const k = rows.indexOf(route.index);
+  let pos;
+  let params = route.params;
+  if (k >= 0) pos = rows.at(k + dir);
+  else { pos = route.index + dir; params = { ...params, check: "all", msg: null }; }
+  if (pos < 0 || pos >= rowIndex(state.result).length) return;
+  navigate(buildHash("details", { ...params, index: pos, f: null }), { replace: true, keepFocus: true });
+}
+
+async function exportFinding() {
+  const route = state.route;
+  const ref = rowIndex(state.result).at(route.index);
+  if (!ref) return;
+  const includeAll = $("include-payload").checked;
+  const f = await buildFinding({ result: state.result, bytes: state.bytes, parser: state.parser, ref, fileName: state.name,
+    isSample: state.isSample, includeAllPayloads: includeAll });
+  const base = state.name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.[^.]*$/, "") || "capture";
+  const file = `mavframe-finding-${base}-offset-${f.finding.offset}.json`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(f, null, 2) + "\n"], { type: "application/json" }));
+  const a = el("a", { href: url, download: file, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $("export-status").textContent = `Exported ${file}: ${f.bytes.payload_hex !== undefined ? "includes the payload bytes" : "payload bytes left out (may carry GPS/position data)"}` +
+    (f.file.sha256 ? "." : "; SHA-256 unavailable outside a secure context.");
+}
+
+// ---------- menu sheet and theme ----------
+const focusables = (root) => [...root.querySelectorAll("a[href], button:not([disabled]), select, input, [tabindex='0']")].filter((e) => e.offsetParent !== null);
+
+function openSheet() {
+  const app = document.querySelector(".app");
+  app.classList.add("sheet-open");
+  $("scrim").hidden = false;
+  const sheet = $("sheet");
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-modal", "true");
+  sheet.setAttribute("aria-label", "Menu");
+  $("main-col").inert = true;
+  $("menu-btn").setAttribute("aria-expanded", "true");
+  (sheet.querySelector('.nav a[aria-current="page"]') || $("sheet-close")).focus();
+}
+
+function closeSheet(returnFocus = true) {
+  const app = document.querySelector(".app");
+  if (!app.classList.contains("sheet-open")) return;
+  app.classList.remove("sheet-open");
+  $("scrim").hidden = true;
+  const sheet = $("sheet");
+  for (const a of ["role", "aria-modal", "aria-label"]) sheet.removeAttribute(a);
+  $("main-col").inert = false;
+  $("menu-btn").setAttribute("aria-expanded", "false");
+  if (returnFocus) $("menu-btn").focus();
+}
+
+function onSheetKey(ev) {
+  if (!document.querySelector(".app").classList.contains("sheet-open")) return;
+  if (ev.key === "Escape") { ev.preventDefault(); closeSheet(true); return; }
+  if (ev.key !== "Tab") return;
+  const items = focusables($("sheet"));
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  if (ev.shiftKey && (i <= 0)) { ev.preventDefault(); items[items.length - 1].focus(); }
+  else if (!ev.shiftKey && (i === items.length - 1 || i < 0)) { ev.preventDefault(); items[0].focus(); }
+}
+
+function applyTheme(dark) {
+  if (dark) document.documentElement.setAttribute("data-theme", "dark"); else document.documentElement.removeAttribute("data-theme");
+  $("theme-toggle").setAttribute("aria-pressed", String(dark));
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", dark ? "#0f1720" : "#f7f8fa");
+  document.querySelector('meta[name="color-scheme"]').setAttribute("content", dark ? "dark" : "light");
+  if (state.result && !$("screen-frames").hidden) renderTimeline(state.route?.screen === "details" ? state.route.index : -1);
+}
+
+function toggleTheme() {
+  const dark = document.documentElement.getAttribute("data-theme") !== "dark";
+  applyTheme(dark);
+  try { window.localStorage.setItem("mavframe-theme", dark ? "dark" : "light"); } catch { /* storage blocked: choice lasts for this page only */ }
 }
 
 // ---------- wiring ----------
 function wire() {
+  applyTheme(document.documentElement.getAttribute("data-theme") === "dark");
+  $("theme-toggle").addEventListener("click", toggleTheme);
+  $("menu-btn").addEventListener("click", openSheet);
+  $("sheet-close").addEventListener("click", () => closeSheet(true));
+  $("scrim").addEventListener("click", () => closeSheet(true));
+  document.addEventListener("keydown", onSheetKey);
+  for (const a of document.querySelectorAll(".nav a, .wordmark a")) a.addEventListener("click", () => closeSheet(false));
+  WIDE.addEventListener("change", () => { closeSheet(false); render({ keepFocus: true }); });
+  $("skip").addEventListener("click", (ev) => {
+    ev.preventDefault();
+    const h1 = [...document.querySelectorAll("main h1")].find((h) => h.offsetParent !== null);
+    (h1 || $("workspace")).focus();
+  });
+  $("back-link").addEventListener("click", (ev) => {
+    if (state.prevRoute && state.prevRoute.screen === "frames") { ev.preventDefault(); history.back(); }
+  });
+  window.addEventListener("hashchange", () => { if (location.hash !== state.lastHash) render(); });
+  window.addEventListener("popstate", () => { if (location.hash !== state.lastHash) render(); });
+
   $("load-sample").addEventListener("click", async () => {
-    state.pendingHash = null;
     await loadSample();
     // The button is disabled while loading, which drops keyboard focus; give it back.
     if (document.activeElement === document.body) $("load-sample").focus();
@@ -705,13 +937,13 @@ function wire() {
   $("cancel").addEventListener("click", () => state.abort?.abort());
   $("file").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
   $("format").addEventListener("change", () => { if (state.bytes) run(state.bytes, state.name, state.isSample); });
-  $("view-frames").addEventListener("click", () => setView("frames"));
-  $("view-issues").addEventListener("click", () => setView("issues"));
-  $("clear-filter").addEventListener("click", () => setFilter(null));
-  // When the pressed button becomes disabled (first or last page), focus moves to the other one.
+
+  for (const chip of document.querySelectorAll(".chip")) chip.addEventListener("click", () => setFilters(chip.dataset.check, state.route.params.msg));
+  $("msg-filter").addEventListener("change", (e) => setFilters(state.route.params.check, e.target.value === "" ? null : Number(e.target.value)));
+  $("clear-filters").addEventListener("click", clearFilters);
   const page = (step, self, other) => {
-    state.page += step;
-    renderList();
+    const p = state.route.params;
+    navigate(buildHash("frames", { ...p, page: state.page + 1 + step }), { replace: true, keepFocus: true });
     if ($(self).disabled) $(other).focus();
   };
   $("prev-page").addEventListener("click", () => page(-1, "prev-page", "next-page"));
@@ -720,23 +952,42 @@ function wire() {
   $("next-issue").addEventListener("click", () => stepIssue(1));
   $("timeline").addEventListener("click", onTimelineClick);
   let t = 0;
-  new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => state.result && renderTimeline(), 100); }).observe($("timeline"));
-  for (const id of ["prev-issue", "next-issue", "prev-page", "next-page", "view-frames", "view-issues"]) $(id).disabled = true;
+  new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (state.result && !$("screen-frames").hidden) renderTimeline(state.route?.screen === "details" ? state.route.index : -1); }, 100); }).observe($("timeline"));
+  let th = 0;
+  new ResizeObserver(() => {
+    clearTimeout(th);
+    th = setTimeout(() => { if (state.anatomy && !$("detail-body").hidden) { renderHex(state.anatomy); selectField(state.route?.params.f || null, false); } }, 100);
+  }).observe($("hex"));
+
+  for (const tname of TABS) {
+    $(`tab-${tname}`).addEventListener("click", () => selectTab(tname, false));
+    $(`tab-${tname}`).addEventListener("keydown", onTabKey);
+  }
+  $("hex").addEventListener("click", onHexClick);
+  $("hex").addEventListener("keydown", onHexKey);
+  $("export-finding").addEventListener("click", () => {
+    exportFinding().catch((err) => { $("export-status").textContent = `Could not export the finding: ${err.message}`; });
+  });
+  $("prev-row").addEventListener("click", () => stepRow(-1));
+  $("next-row").addEventListener("click", () => stepRow(1));
 }
 
 async function main() {
   wire();
+  render();
   setBusy(true);
   try {
     state.parser = await loadParser("mavframe.wasm");
   } catch (err) {
     setStatus(`Could not load the parser (mavframe.wasm): ${err.message}`, true);
+    setBusy(false);
+    $("load-sample").disabled = true;
+    render({ keepFocus: true });
     return;
   }
   setBusy(false);
-  for (const id of ["view-frames", "view-issues"]) $(id).disabled = false;
-  state.pendingHash = location.hash || null;
   await loadSample();
+  if (!state.result) render({ keepFocus: true });
 }
 
 main();

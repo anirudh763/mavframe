@@ -4,148 +4,278 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
-<title>mavframe inspector</title>
+<title>Capture – Mavframe</title>
 <meta name="description" content="Inspect MAVLink v2 telemetry captures (.tlog or raw bytes) in the browser with the mavframe C parser compiled to WebAssembly. Files never leave your machine.">
+<meta name="theme-color" content="#f7f8fa">
+<meta name="color-scheme" content="light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/ui.css">
 <link rel="stylesheet" href="css/inspector.css">
+<script src="js/theme.js"></script>
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
-<a class="skip" href="#main">Skip to inspector</a>
-<header class="app-header">
-  <h1 class="name">mavframe inspector</h1>
-  <span class="muted tagline">MAVLink v2 capture viewer. The parser is the project's C code compiled to WebAssembly.</span>
-  <a class="repo" href="https://github.com/anirudh763/mavframe">Source on GitHub</a>
-</header>
-
-<main id="main">
-  <noscript><p class="noscript" id="noscript">JavaScript is turned off, so the inspector cannot load its parser and the buttons below do nothing. Captures are parsed in this tab by WebAssembly started from JavaScript; nothing is uploaded. Turn on JavaScript for this page, or use the command-line tool from the repository: <code>mavframe-dump capture.bin</code>.</p></noscript>
-  <section class="toolbar" aria-label="Capture">
-    <button type="button" id="load-sample" class="btn primary">Load sample flight</button>
-    <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
-    <label for="file" class="btn">Open capture file</label>
-    <span class="field">
-      <label for="format">Format</label>
-      <select id="format">
-        <option value="auto">Auto-detect</option>
-        <option value="tlog">.tlog (timestamp + frame)</option>
-        <option value="raw">Raw byte stream</option>
-      </select>
-    </span>
-    <span id="source" class="source"></span>
-  </section>
-
-  <div class="status-row">
-    <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
-    <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
-    <span id="progress-text" class="muted mono" hidden></span>
-    <button type="button" class="btn" id="cancel" hidden>Cancel</button>
-  </div>
-
-  <section aria-labelledby="h-summary">
-    <h2 id="h-summary" class="sr-only">Summary</h2>
-    <dl class="metrics" id="metrics">
-      <div><dt>CRC errors</dt><dd id="m-crc">–</dd></div>
-      <div><dt>Sequence gaps</dt><dd id="m-gaps" aria-describedby="gap-assumptions">–</dd></div>
-      <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
-      <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
-      <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
-      <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
-      <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
-    </dl>
-    <p id="gap-assumptions" class="muted small">Gap estimates assume one fully observed channel per sender and in-order arrival. Routing, filtering or merged links can create apparent loss. <a href="https://mavlink.io/en/guide/packet_loss.html" target="_blank" rel="noopener">MAVLink packet-loss assumptions (opens in a new tab)</a>.</p>
-  </section>
-
-  <section class="box timeline-box" aria-labelledby="h-timeline">
-    <div class="box-header bar">
-      <h2 id="h-timeline">Timeline</h2>
-      <ul class="legend" aria-label="Timeline markers">
-        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC error</li>
-        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
-        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Other: unsupported id, bad flags, duplicate or out-of-order seq</li>
-        <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-density" x="1" y="4" width="10" height="7"/></svg>Frames per interval</li>
+<a class="skip" href="#workspace" id="skip">Skip to content</a>
+<div class="app">
+  <div id="sheet" class="rail">
+   <aside class="rail-inner" aria-label="Mavframe menu">
+    <div class="wordmark">
+      <a class="brand" href="#/capture">Mavframe</a>
+      <p class="purpose">From bytes to frames</p>
+    </div>
+    <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
+    <nav aria-label="Main" class="nav">
+      <p class="nav-group" id="g-work">Inspect</p>
+      <ul aria-labelledby="g-work">
+        <li><a href="#/capture" data-route="capture">Capture</a></li>
+        <li><a href="#/frames" data-route="frames">Frames</a></li>
       </ul>
-      <span class="spacer"></span>
-      <button type="button" class="btn" id="prev-issue">Previous issue</button>
-      <button type="button" class="btn" id="next-issue">Next issue</button>
+      <p class="nav-group" id="g-learn">Learn</p>
+      <ul aria-labelledby="g-learn">
+        <li><a href="#/help" data-route="help">Format help</a></li>
+      </ul>
+    </nav>
+    <div class="rail-foot">
+      <button type="button" class="btn" id="theme-toggle" aria-pressed="false">Dark theme</button>
+      <a href="https://github.com/anirudh763/mavframe">Source on GitHub</a>
     </div>
-    <div class="timeline-wrap">
-      <svg id="timeline" role="img" aria-labelledby="timeline-desc" preserveAspectRatio="none"></svg>
-      <p id="timeline-desc" class="sr-only">No capture loaded.</p>
-      <p id="timeline-cap" class="muted small cap-note" hidden></p>
-      <div class="axis mono"><span id="axis-start"></span><span id="axis-unit" class="muted"></span><span id="axis-end"></span></div>
-    </div>
-  </section>
+   </aside>
+  </div>
+  <div class="scrim" id="scrim" hidden></div>
 
-  <div class="panes">
-    <section class="box" aria-labelledby="h-messages">
-      <div class="box-header bar"><h2 id="h-messages">Messages</h2><span class="muted small">Select a message to filter the frame list</span><span class="muted small scroll-hint">Scroll the table sideways for senders</span></div>
-      <div class="table-wrap">
-        <table id="msg-table" class="dense">
-          <thead><tr>
-            <th scope="col" class="num">ID</th><th scope="col">Message</th>
-            <th scope="col" class="num">Count</th><th scope="col" class="num">Rate (Hz)</th><th scope="col" class="num">CRC errors</th>
-            <th scope="col">Sources (sys:comp)</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+  <div class="main-col" id="main-col">
+    <header class="workspace-header">
+      <button type="button" class="btn" id="menu-btn" aria-expanded="false" aria-controls="sheet">Menu</button>
+      <a class="back" id="back-link" href="#/frames" hidden>← Back</a>
+      <nav aria-label="Breadcrumb" class="crumbs"><ol id="crumbs"><li>Mavframe</li><li aria-current="page">Capture</li></ol></nav>
+    </header>
 
-    <section class="box" aria-labelledby="h-frames">
-      <div class="box-header bar">
-        <h2 id="h-frames">Frames</h2>
-        <div class="toggles" role="group" aria-label="List">
-          <button type="button" class="btn" id="view-frames" aria-pressed="true">All frames</button>
-          <button type="button" class="btn" id="view-issues" aria-pressed="false">Issues</button>
+    <main id="workspace" tabindex="-1">
+      <noscript><p class="noscript" id="noscript">JavaScript is turned off, so the inspector cannot load its parser and the buttons do nothing. Captures are parsed in this tab by WebAssembly started from JavaScript; nothing is uploaded. Turn on JavaScript for this page, or use the command-line tool from the repository: <code>mavframe-dump capture.bin</code>.</p></noscript>
+
+      <!-- Capture -->
+      <section id="screen-capture" class="screen" aria-labelledby="h-capture">
+        <h1 id="h-capture" tabindex="-1">Capture</h1>
+        <p class="lede">Open a MAVLink v2 capture (.tlog or a raw byte stream). It is parsed in this tab by the project's C parser compiled to WebAssembly; nothing is uploaded.</p>
+        <div class="toolbar" role="group" aria-label="Load a capture">
+          <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
+          <label for="file" class="btn primary">Open capture file</label>
+          <button type="button" id="load-sample" class="btn">Load engineering sample</button>
+          <span class="field">
+            <label for="format">Format</label>
+            <select id="format">
+              <option value="auto">Auto-detect</option>
+              <option value="tlog">.tlog (timestamp + frame)</option>
+              <option value="raw">Raw byte stream</option>
+            </select>
+          </span>
         </div>
-        <span id="filter" class="filter" hidden>
-          <span id="filter-text"></span>
-          <button type="button" class="btn small-btn" id="clear-filter">Clear filter</button>
-        </span>
-      </div>
-      <div class="table-wrap list-wrap">
-        <table id="list-table" class="dense">
-          <thead><tr></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="pager">
-        <button type="button" class="btn" id="prev-page">Previous page</button>
-        <span id="page-info" class="muted"></span>
-        <button type="button" class="btn" id="next-page">Next page</button>
-      </div>
-    </section>
-  </div>
+        <div class="status-row">
+          <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
+          <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
+          <span id="progress-text" class="muted" hidden></span>
+          <button type="button" class="btn" id="cancel" hidden>Cancel</button>
+        </div>
+        <div id="capture-result" hidden>
+          <p id="source" class="source"></p>
+          <h2 id="h-summary">Summary</h2>
+          <dl class="metrics" id="metrics">
+            <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
+            <div><dt>CRC failures</dt><dd id="m-crc">–</dd></div>
+            <div><dt>Unsupported messages</dt><dd id="m-unsupported">–</dd></div>
+            <div><dt>Sequence gaps</dt><dd id="m-gaps" aria-describedby="gap-assumptions">–</dd></div>
+            <div><dt>Skipped bytes</dt><dd id="m-skipped">–</dd></div>
+            <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
+            <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
+          </dl>
+          <ul class="assumptions">
+            <li id="gap-assumptions">Gap estimates assume one fully observed channel per sender and in-order arrival. Routing, filtering or merged links can create apparent loss. <a href="https://mavlink.io/en/guide/packet_loss.html" target="_blank" rel="noopener">MAVLink packet-loss assumptions (opens in a new tab)</a>.</li>
+            <li>A CRC failure means the checksum did not match. An unsupported message id is not checked at all, so it is counted separately and never called corrupt.</li>
+            <li>Message signatures are shown as present but are not verified.</li>
+          </ul>
+          <p><a class="btn" id="view-frames" href="#/frames">View frames</a></p>
+          <h2 id="h-messages">Message types</h2>
+          <div class="table-wrap" id="msg-region" role="region" aria-labelledby="h-messages" tabindex="0">
+            <table id="msg-table" class="dense">
+              <thead><tr>
+                <th scope="col" class="num">ID</th><th scope="col">Message</th>
+                <th scope="col" class="num">Count</th><th scope="col" class="num">Rate (Hz)</th><th scope="col" class="num">CRC failures</th>
+                <th scope="col">Senders (sys:comp)</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
-  <div class="panes detail">
-    <section class="box" aria-labelledby="h-bytes">
-      <div class="box-header bar">
-        <h2 id="h-bytes">Bytes</h2>
-        <ul class="legend" aria-label="Byte regions">
-          <li><span class="swatch mono seg-ts" aria-hidden="true">00</span>Timestamp</li>
-          <li><span class="swatch mono seg-hdr" aria-hidden="true">fd</span>Header</li>
-          <li><span class="swatch mono seg-pay" aria-hidden="true">2a</span>Payload</li>
-          <li><span class="swatch mono seg-crc" aria-hidden="true">c3</span>CRC</li>
-          <li><span class="swatch mono seg-sig" aria-hidden="true">01</span>Signature</li>
-        </ul>
-      </div>
-      <pre id="hex" class="hex" tabindex="0" aria-label="Bytes of the selected frame">Select a frame.</pre>
-    </section>
-    <section class="box" aria-labelledby="h-decoded">
-      <div class="box-header bar"><h2 id="h-decoded">Decoded</h2></div>
-      <div id="decoded" class="decoded" tabindex="0" role="region" aria-label="Decoded fields"><p class="muted pad">Select a frame or an issue.</p></div>
-    </section>
-  </div>
-</main>
+      <!-- Frames: the packet analyzer (list | field tree | bytes on wide screens) -->
+      <section id="screen-frames" class="screen" aria-labelledby="h-frames" hidden>
+        <h1 id="h-frames" tabindex="-1">Frames</h1>
+        <div id="frames-empty" class="empty" hidden></div>
+        <div id="frames-body" hidden>
+          <p class="counts" id="frames-counts"></p>
+          <p class="muted small" id="frames-assumptions">Gap counts assume one fully observed channel per sender and in-order arrival. Signatures are not verified.</p>
 
-<footer class="footer muted">
-  <p>Files are read in this browser tab and never uploaded. Frames are found and CRC-checked by
-  <code>src/mavframe.c</code> compiled to WebAssembly; payload fields of HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE,
-  GLOBAL_POSITION_INT and VFR_HUD are decoded from the official MAVLink XML definitions (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). MAVLink v1 frames are not parsed
-  and count as skipped bytes. Message signatures are shown as present but are not verified. Captures up to 256 MB.
-  Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
-</footer>
+          <section class="box timeline-box" aria-labelledby="h-timeline">
+            <div class="box-header bar">
+              <h2 id="h-timeline">Timeline</h2>
+              <ul class="legend" aria-label="Timeline markers">
+                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC failure</li>
+                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
+                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-unsup" d="M6 0V12"/></svg>Unsupported, bad flags, repeated or late seq</li>
+                <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-density" x="1" y="4" width="10" height="7"/></svg>Frames per interval</li>
+              </ul>
+            </div>
+            <div class="timeline-wrap">
+              <svg id="timeline" role="img" aria-labelledby="timeline-desc" preserveAspectRatio="none"></svg>
+              <p id="timeline-desc" class="sr-only">No capture loaded.</p>
+              <p id="timeline-cap" class="muted small cap-note" hidden></p>
+              <div class="axis"><span id="axis-start"></span><span id="axis-unit" class="muted"></span><span id="axis-end"></span></div>
+            </div>
+          </section>
+
+          <div class="filters">
+            <div class="chips" role="group" aria-label="Check status">
+              <button type="button" class="chip" data-check="all" aria-pressed="true">All</button>
+              <button type="button" class="chip" data-check="issues" aria-pressed="false">Issues</button>
+              <button type="button" class="chip" data-check="crc" aria-pressed="false">CRC failed</button>
+              <button type="button" class="chip" data-check="unsupported" aria-pressed="false">Unsupported</button>
+              <button type="button" class="chip" data-check="valid" aria-pressed="false">Valid CRC</button>
+            </div>
+            <span class="field">
+              <label for="msg-filter">Message</label>
+              <select id="msg-filter"><option value="">All messages</option></select>
+            </span>
+            <button type="button" class="btn" id="clear-filters" hidden>Clear filters</button>
+            <div class="issue-step" role="group" aria-label="Step through issues">
+              <button type="button" class="btn" id="prev-issue">Previous issue</button>
+              <button type="button" class="btn" id="next-issue">Next issue</button>
+            </div>
+          </div>
+
+          <div class="analyzer">
+            <div class="pane pane-list">
+              <h2 class="sr-only" id="h-list">Frame list</h2>
+              <div class="table-wrap list-wrap" id="frame-region" role="region" aria-label="Frame rows" tabindex="0">
+                <table id="frame-table" class="dense rows">
+                  <thead><tr>
+                    <th scope="col">Check</th><th scope="col">Message</th><th scope="col" class="num">Time (s)</th><th scope="col" class="num">Offset</th>
+                    <th scope="col">Sys:Comp</th><th scope="col" class="num">Seq</th><th scope="col">Note</th>
+                  </tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="pager">
+                <button type="button" class="btn" id="prev-page" aria-label="Previous page">Previous</button>
+                <span id="page-info" class="muted"></span>
+                <button type="button" class="btn" id="next-page" aria-label="Next page">Next</button>
+              </div>
+            </div>
+            <div class="pane pane-detail" id="analyzer-detail"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Frame details (contextual; on wide screens it is shown inside Frames) -->
+      <section id="screen-details" class="screen" aria-labelledby="h-details" hidden>
+        <h1 id="h-details" tabindex="-1">Frame details</h1>
+        <div id="details-host"></div>
+      </section>
+
+      <!-- The detail component; moved between Frames (wide) and Frame details (narrow). -->
+      <div id="detail" class="detail" hidden>
+        <div id="detail-empty" class="empty" hidden></div>
+        <div id="detail-body">
+          <h2 id="detail-title" class="detail-title" tabindex="-1"></h2>
+          <dl id="detail-summary" class="summary"></dl>
+          <div id="crc-compare" class="crc-compare"></div>
+          <div class="tabs" role="tablist" aria-label="Frame views" id="tablist">
+            <button type="button" role="tab" id="tab-decoded" aria-controls="panel-decoded" aria-selected="true">Decoded</button>
+            <button type="button" role="tab" id="tab-bytes" aria-controls="panel-bytes" aria-selected="false" tabindex="-1">Bytes</button>
+            <button type="button" role="tab" id="tab-header" aria-controls="panel-header" aria-selected="false" tabindex="-1">Header</button>
+          </div>
+          <div class="panes">
+            <div class="tree-col">
+              <div id="detail-notes"></div>
+              <div id="panel-header" class="panel" role="tabpanel" aria-labelledby="tab-header"></div>
+              <div id="panel-decoded" class="panel" role="tabpanel" aria-labelledby="tab-decoded"></div>
+            </div>
+            <div id="panel-bytes" class="panel" role="tabpanel" aria-labelledby="tab-bytes">
+              <ul class="legend" aria-label="Byte regions">
+                <li><span class="swatch seg-ts" aria-hidden="true">00</span>Timestamp</li>
+                <li><span class="swatch seg-hdr" aria-hidden="true">fd</span>Header</li>
+                <li><span class="swatch seg-pay" aria-hidden="true">2a</span>Payload</li>
+                <li><span class="swatch seg-crc" aria-hidden="true">c3</span>CRC</li>
+                <li><span class="swatch seg-sig" aria-hidden="true">01</span>Signature</li>
+                <li><span class="swatch hl" aria-hidden="true">7f</span>Selected field</li>
+              </ul>
+              <pre id="hex" class="hex" tabindex="0" aria-label="Bytes of the selected row" aria-describedby="hex-help">Select a row.</pre>
+              <p id="hex-help" class="muted small">Select a field to highlight its bytes, or click a byte to select its field. With the bytes focused, Left and Right arrows move between fields.</p>
+            </div>
+          </div>
+          <p id="field-status" class="sr-only" role="status" aria-live="polite"></p>
+          <div class="export" role="group" aria-label="Export and step">
+            <button type="button" class="btn primary" id="export-finding" aria-describedby="export-help">Export finding (JSON)</button>
+            <label class="check" for="include-payload"><input type="checkbox" id="include-payload">Include all payloads (may contain GPS)</label>
+            <span class="step">
+              <button type="button" class="btn" id="prev-row">Previous row</button>
+              <button type="button" class="btn" id="next-row">Next row</button>
+            </span>
+            <p id="export-help" class="sr-only">Saves this row as JSON: mavframe version, file name, size and SHA-256, offsets, CRC wire vs computed and the parser's assumptions. Payload bytes are left out unless the message carries no position, or you include all payload bytes; they may contain GPS/position data.</p>
+            <p id="export-status" class="small export-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Format help -->
+      <section id="screen-help" class="screen prose" aria-labelledby="h-help" hidden>
+        <h1 id="h-help" tabindex="-1">Format help</h1>
+        <p class="lede">What the inspector reads, how it decides a frame is good, and what it does not check.</p>
+        <h2>What you can open</h2>
+        <p>A <strong>.tlog</strong> file (each record is an 8-byte big-endian microsecond timestamp followed by one frame, as written by ground stations) or a <strong>raw byte stream</strong> of MAVLink v2 frames. Auto-detect picks .tlog from the file name or from a plausible timestamp before the first start byte. Captures up to 256 MB are read in this tab; the details of the first 4,000,000 frames and 100,000 issues are listed, and the counts always cover the whole file.</p>
+        <h2>MAVLink v2 frame layout</h2>
+        <div class="table-wrap" role="region" aria-labelledby="h-layout" tabindex="0">
+          <table class="dense">
+            <caption id="h-layout">Bytes of one MAVLink v2 frame</caption>
+            <thead><tr><th scope="col">Bytes</th><th scope="col">Field</th><th scope="col">Notes</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">0</td><td>Start byte</td><td><code>0xFD</code> for v2 (v1 uses <code>0xFE</code> and is not parsed).</td></tr>
+              <tr><td class="mono">1</td><td>Payload length</td><td>0 to 255. Trailing zero bytes of the payload may be trimmed by the sender.</td></tr>
+              <tr><td class="mono">2</td><td>Incompat flags</td><td>Only bit 0 (signed) is supported; any other bit makes the frame a "bad flags" reject.</td></tr>
+              <tr><td class="mono">3</td><td>Compat flags</td><td>Ignored.</td></tr>
+              <tr><td class="mono">4</td><td>Sequence</td><td>8 bits per sender, wraps at 255.</td></tr>
+              <tr><td class="mono">5–6</td><td>System ID, component ID</td><td>Shown as sys:comp.</td></tr>
+              <tr><td class="mono">7–9</td><td>Message ID</td><td>24 bits, little-endian.</td></tr>
+              <tr><td class="mono">10…</td><td>Payload</td><td>Decoded for HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD from the official XML.</td></tr>
+              <tr><td class="mono">+2</td><td>CRC</td><td>CRC-16/MCRF4XX over bytes 1 to the end of the payload plus the message's CRC_EXTRA byte.</td></tr>
+              <tr><td class="mono">+13</td><td>Signature</td><td>Only when signed: link id, timestamp, hash.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h2>CRC failed, unsupported, bad flags</h2>
+        <p><strong>CRC failed</strong>: the header looked valid, but the checksum the parser computed does not match the two CRC bytes in the capture. The frame is discarded and the parser looks for the next start byte inside it, so a valid frame hidden in damaged bytes is still found. Frame details shows the wire and computed values side by side.</p>
+        <p><strong>Unsupported</strong>: the message id is not in the common dialect, so its CRC_EXTRA is unknown and the checksum cannot be checked. It may come from another dialect (such as ardupilotmega) or be noise. These are never counted as corrupt.</p>
+        <p><strong>Bad flags</strong>: incompat flags other than "signed", which this parser does not support.</p>
+        <h2>Sequence gaps and the channel assumption</h2>
+        <p>For each sender the step between sequence numbers is read as in order (1), duplicate (0), a gap (2 to 128: about step − 1 frames missing) or a step back (a late frame when small, otherwise a likely sender restart). A gap is an estimate: it assumes one fully observed channel per sender and in-order arrival. A late frame, a router that drops or filters messages, or two merged links look the same.</p>
+        <h2>Signatures</h2>
+        <p>Signed frames carry 13 extra bytes. The inspector shows them as "signature present; not verified": checking a signature needs the link's secret key, and the parser does not do it.</p>
+        <h2>The bundled sample</h2>
+        <p>The engineering sample (<code>sample/sample-flight.tlog</code>) is synthetic: <code>tools/gen_sample_tlog.py</code> generates it with known CRC failures, sequence gaps and skipped bytes so the tests can check exact counts. It is not a real flight and its numbers say nothing about any vehicle.</p>
+        <h2>Finding export</h2>
+        <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. Payload bytes are left out by default unless the message carries no position (HEARTBEAT, SYS_STATUS, ATTITUDE). A checkbox adds them for every message.</p>
+        <h2>Privacy and licences</h2>
+        <p>Files are read in this browser tab and never uploaded. Message definitions come from the official MAVLink XML (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">licence</a>).</p>
+      </section>
+
+      <!-- Not found -->
+      <section id="screen-notfound" class="screen" aria-labelledby="h-notfound" hidden>
+        <h1 id="h-notfound" tabindex="-1">Not found</h1>
+        <p class="lede">There is no screen at this address.</p>
+        <p><a class="btn" href="#/capture">Go to Capture</a></p>
+      </section>
+    </main>
+  </div>
+</div>
 </body>
 </html>

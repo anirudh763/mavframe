@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Browser inspector rebuild (UI only: `src/`, `include/`, `web/wasm/` and
+`docs/mavframe.wasm` are byte-identical to 0.1.0).
+
+- Light by default, also when the OS prefers dark; dark only through the
+  "Dark theme" toggle. New tokens and layout in `DESIGN.md`.
+- Hash routes: Capture, Frames, Frame details (`#/frames/<row>`), Format help,
+  Not found. Old `#view=…&msg=…&sel=…` links are mapped to them.
+- Packet-analyzer layout: frame rows (time, offset, message, sys:comp, seq,
+  CRC status) with filters, linked field tree and hex bytes, CRC wire vs
+  computed side by side.
+- Finding export (JSON) without position payload bytes by default.
+- Tests: `tests/web/test_routes.mjs` (root visual gate) and
+  `tests/web/test_finding.mjs` (row model, export).
+
 ## 0.1.0 – 2026-11-13
 
 First numbered version. The parser (`src/mavframe.c`), its events and counters,
