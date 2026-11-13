@@ -174,7 +174,7 @@ test("issues, filters, decoding and the URL state work", async () => {
   await page2.close();
 });
 
-for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900], ["light", 375, 800], ["dark", 375, 800]]) {
+for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900], ["light", 375, 800], ["dark", 375, 800], ["light", 320, 800], ["dark", 320, 800]]) {
   test(`axe-core: 0 violations (${scheme}, ${width} px)`, async () => {
     const page = await openPage({ colorScheme: scheme, viewport: { width, height } });
     await injectAxe(page);
@@ -277,6 +277,35 @@ test("keyboard only: load the sample, step to an issue, move through rows", asyn
   await tabTo("#format");
   assert.deepEqual(page.errors, []);
   await page.close();
+});
+
+test("keyboard only: the decoded pane is a focusable, labelled region that scrolls with the arrow keys", async () => {
+  for (const scheme of ["light", "dark"]) {
+    const page = await openPage({ colorScheme: scheme, viewport: { width: 320, height: 800 } });
+    await page.getByRole("button", { name: "Next issue" }).click();
+    const pane = page.getByRole("region", { name: "Decoded fields", exact: true });
+    assert.equal(await pane.getAttribute("id"), "decoded", "#decoded is exposed as the 'Decoded fields' region");
+    // Make sure there is something to scroll whatever the sample's content height is.
+    await page.$eval("#decoded", (el) => { el.style.maxHeight = "120px"; });
+    const dims = await page.$eval("#decoded", (el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+    assert.ok(dims.sh > dims.ch, `pane overflows (${dims.sh} > ${dims.ch})`);
+    // Reach it with Tab from the selected row, the way a keyboard user would.
+    await page.locator('#list-table .rowbtn[aria-current="true"]').focus();
+    let reached = false;
+    for (let i = 0; i < 40 && !reached; i++) {
+      await page.keyboard.press("Tab");
+      reached = await page.evaluate(() => document.activeElement?.id === "decoded");
+    }
+    assert.ok(reached, "#decoded is reachable with Tab");
+    const ring = await page.$eval("#decoded", (el) => { const cs = getComputedStyle(el); return [cs.outlineStyle, cs.outlineWidth]; });
+    assert.notEqual(ring[0], "none", `visible focus ring on #decoded (${scheme})`);
+    assert.notEqual(ring[1], "0px", `visible focus ring on #decoded (${scheme})`);
+    const top0 = await page.$eval("#decoded", (el) => el.scrollTop);
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+    await page.waitForFunction((t) => document.getElementById("decoded").scrollTop > t, top0, { timeout: 2000 });
+    assert.deepEqual(page.errors, []);
+    await page.close();
+  }
 });
 
 test("375 px width and 200% zoom: no horizontal page scroll, controls on screen", async () => {
