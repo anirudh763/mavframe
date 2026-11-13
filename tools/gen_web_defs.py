@@ -24,6 +24,10 @@ SIZES = {"char": 1, "uint8_t": 1, "int8_t": 1, "uint16_t": 2, "int16_t": 2, "uin
          "int32_t": 4, "float": 4, "uint64_t": 8, "int64_t": 8, "double": 8}
 
 
+LIMITS = {"UINT8_MAX": 2**8 - 1, "UINT16_MAX": 2**16 - 1, "UINT32_MAX": 2**32 - 1,
+          "INT8_MAX": 2**7 - 1, "INT16_MAX": 2**15 - 1, "INT32_MAX": 2**31 - 1}
+
+
 def x25(data, crc=0xFFFF):
     for b in data:
         tmp = (b ^ (crc & 0xFF)) & 0xFF
@@ -44,6 +48,10 @@ def parse_field(el, extension):
     for attr in ("units", "enum"):
         if el.get(attr):
             f[attr] = el.get(attr)
+    if el.get("invalid") is not None:
+        # The value that means "not provided", e.g. UINT16_MAX or 0.
+        inv = el.get("invalid")
+        f["invalid"] = LIMITS[inv] if inv in LIMITS else int(inv)
     if el.get("display") == "bitmask":
         f["bitmask"] = True
     return f

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>mavframe inspector</title>
 <meta name="description" content="Inspect MAVLink v2 telemetry captures (.tlog or raw bytes) in the browser with the mavframe C parser compiled to WebAssembly. Files never leave your machine.">
 <link rel="stylesheet" href="css/ui.css">
@@ -69,6 +70,7 @@
     <div class="timeline-wrap">
       <svg id="timeline" role="img" aria-labelledby="timeline-desc" preserveAspectRatio="none"></svg>
       <p id="timeline-desc" class="sr-only">No capture loaded.</p>
+      <p id="timeline-cap" class="muted small cap-note" hidden></p>
       <div class="axis mono"><span id="axis-start"></span><span id="axis-unit" class="muted"></span><span id="axis-end"></span></div>
     </div>
   </section>
@@ -79,8 +81,9 @@
       <div class="table-wrap">
         <table id="msg-table" class="dense">
           <thead><tr>
-            <th scope="col" class="num">ID</th><th scope="col">Message</th><th scope="col">Sources</th>
+            <th scope="col" class="num">ID</th><th scope="col">Message</th>
             <th scope="col" class="num">Count</th><th scope="col" class="num">Rate (Hz)</th><th scope="col" class="num">CRC errors</th>
+            <th scope="col">Sources (sys:comp)</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -118,11 +121,11 @@
       <div class="box-header bar">
         <h2 id="h-bytes">Bytes</h2>
         <ul class="legend" aria-label="Byte colours">
-          <li><span class="swatch seg-ts" aria-hidden="true"></span>Timestamp</li>
-          <li><span class="swatch seg-hdr" aria-hidden="true"></span>Header</li>
-          <li><span class="swatch seg-pay" aria-hidden="true"></span>Payload</li>
-          <li><span class="swatch seg-crc" aria-hidden="true"></span>CRC</li>
-          <li><span class="swatch seg-sig" aria-hidden="true"></span>Signature</li>
+          <li><span class="swatch mono seg-ts" aria-hidden="true">00</span>Timestamp</li>
+          <li><span class="swatch mono seg-hdr" aria-hidden="true">fd</span>Header</li>
+          <li><span class="swatch mono seg-pay" aria-hidden="true">2a</span>Payload</li>
+          <li><span class="swatch mono seg-crc" aria-hidden="true">c3</span>CRC</li>
+          <li><span class="swatch mono seg-sig" aria-hidden="true">01</span>Signature</li>
         </ul>
       </div>
       <pre id="hex" class="hex" tabindex="0" aria-label="Bytes of the selected frame">Select a frame.</pre>

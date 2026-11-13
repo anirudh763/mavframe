@@ -181,7 +181,7 @@ function renderSummary() {
     dd.className = cls || "";
     dd.replaceChildren(main, ...(sub ? [el("span", { class: "sub", text: sub })] : []));
   };
-  set("m-frames", fmt(r.validFrames), `${fmt(r.messages.length)} message types`);
+  set("m-frames", fmt(r.validFrames), `${fmt(r.messages.length)} message type${r.messages.length === 1 ? "" : "s"}`);
   set("m-crc", fmt(r.crcErrors), null, r.crcErrors ? "bad" : "");
   set("m-gaps", fmt(r.gaps), `~${fmt(r.missingFrames)} frames missing if packets arrived in order; ` +
     `${fmt(r.duplicates)} duplicate, ${fmt(r.reorders)} out of order`, r.gaps ? "warn" : "");
@@ -192,20 +192,30 @@ function renderSummary() {
     timeMode() ? new Date(r.firstTs / 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "no timestamps in raw streams");
 }
 
+// Long message names may wrap only after an underscore, never mid-word.
+function breakAtUnderscores(name) {
+  const parts = name.split("_");
+  return parts.flatMap((p, i) => (i < parts.length - 1 ? [p + "_", document.createElement("wbr")] : [p]));
+}
+
 function renderMessages() {
   const r = state.result;
   const tbody = $("msg-table").querySelector("tbody");
   const rows = r.messages.map((m) => {
     const pressed = state.msg === m.msgid;
     const btn = el("button", { type: "button", class: "rowbtn msgbtn", "aria-pressed": pressed ? "true" : "false",
-      onclick: () => setFilter(pressed ? null : m.msgid) }, m.name || `id ${m.msgid}`);
+      onclick: () => setFilter(pressed ? null : m.msgid) }, ...breakAtUnderscores(m.name || `id ${m.msgid}`));
+    const hz = (v) => (Number.isNaN(v) ? "n/a" : v.toFixed(2));
+    const many = m.sources.length > 1;
+    const sources = el("td", { class: "sources" }, ...m.sources.map((x) => el("span", { class: "src mono",
+      text: many ? `${x.sysid}:${x.compid} at ${hz(x.rateHz)} Hz` : `${x.sysid}:${x.compid}` })));
     return el("tr", { class: pressed ? "selected" : null },
       el("td", { class: "num", text: m.msgid }),
       el("td", {}, btn),
-      el("td", { class: "mono", text: m.sources.map(([s, c]) => `${s}:${c}`).join(" ") }),
       el("td", { class: "num", text: fmt(m.count) }),
-      el("td", { class: "num", text: Number.isNaN(m.rateHz) ? "n/a" : m.rateHz.toFixed(2) }),
-      el("td", { class: "num" + (m.crcErrors ? " bad" : ""), text: fmt(m.crcErrors) }));
+      el("td", { class: "num", text: many ? `${hz(m.rateHz)} all` : hz(m.rateHz) }),
+      el("td", { class: "num" + (m.crcErrors ? " bad" : ""), text: fmt(m.crcErrors) }),
+      sources);
   });
   if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: 6, class: "muted", text: "No valid MAVLink v2 frames in this capture." })));
   tbody.replaceChildren(...rows);
@@ -280,6 +290,12 @@ function renderTimeline() {
   $("axis-start").textContent = timeMode() ? "0 s" : "0";
   $("axis-unit").textContent = timeMode() ? "time since first frame" : "byte offset (raw streams have no timestamps)";
   $("axis-end").textContent = timeMode() ? `${((r.endTs - r.firstTs) / 1e6).toFixed(1)} s` : fmt(r.byteLength);
+  const cap = $("timeline-cap");
+  cap.hidden = !r.unlistedIssues && !r.unlistedFrames;
+  cap.textContent = [
+    r.unlistedIssues ? `Markers show the first ${fmt(r.issues.length)} of ${fmt(r.issues.length + r.unlistedIssues)} issues.` : "",
+    r.unlistedFrames ? `Frame density covers the first ${fmt(r.frameCount)} of ${fmt(r.validFrames)} frames.` : "",
+  ].join(" ").trim();
 }
 
 function selectedPoint() {

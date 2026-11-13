@@ -63,12 +63,21 @@ async function openPage(opts = {}) {
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
   page.errors = errors;
   if (route) await route(page);
+  // Record Content-Security-Policy violations (the page's CSP forbids inline code).
+  await page.addInitScript(() => {
+    window.__csp = [];
+    document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
   await page.goto(base + (hash || ""));
   if (!noWait) await waitParsed(page, "sample-flight.tlog");
   return page;
 }
 
 const statusText = (page) => page.textContent("#status");
+const cspViolations = (page) => page.evaluate(() => window.__csp);
+// axe is evaluated through the DevTools protocol, not injected as a <script>, so the CSP stays on.
+const AXE_SOURCE = fs.readFileSync(AXE, "utf8");
+const injectAxe = (page) => page.evaluate(AXE_SOURCE);
 async function upload(page, file) {
   await page.setInputFiles("#file", file);
 }
@@ -100,11 +109,22 @@ test("Load sample flight shows the generator's exact counts", async () => {
   // Message table: one row per message type with count and CRC errors.
   const rows = await page.$$eval("#msg-table tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((c) => c.textContent)));
   assert.equal(rows.length, Object.keys(truth.messages).length);
-  for (const [id, name, , count, , crc] of rows) {
+  for (const [id, name, count, , crc] of rows) {
     assert.equal(name, truth.messages[id].name);
     assert.equal(count.replace(/,/g, ""), String(truth.messages[id].count));
     assert.equal(crc, String(truth.messages[id].crc_errors));
   }
+  // Rates per sender for a message two systems send.
+  const hb = await page.textContent("#msg-table tbody tr:first-child");
+  assert.match(hb, /1:1 at 1\.00 Hz/);
+  assert.match(hb, /255:190 at 1\.00 Hz/);
+  assert.match(hb, /2\.00 all/);
+  // GPS_RAW_INT yaw 0 means "not provided" (official XML: invalid="0").
+  await page.locator("#msg-table").getByRole("button", { name: "GPS_RAW_INT" }).click();
+  await page.locator("#list-table .rowbtn").first().click();
+  assert.match(await page.textContent("#decoded"), /yaw \(extension\)\s*0\s*cdeg\s*not provided/);
+  await page.locator("#msg-table").getByRole("button", { name: "GPS_RAW_INT" }).click();
+  assert.deepEqual(await cspViolations(page), [], "CSP violations");
   // Timeline markers.
   assert.equal(await page.locator("#timeline g.crc").count(), truth.crc_errors);
   assert.equal(await page.locator("#timeline g.gap").count(), truth.gaps);
@@ -154,7 +174,7 @@ test("issues, filters, decoding and the URL state work", async () => {
 for (const scheme of ["light", "dark"]) {
   test(`axe-core: 0 violations (${scheme})`, async () => {
     const page = await openPage({ colorScheme: scheme });
-    await page.addScriptTag({ path: AXE });
+    await injectAxe(page);
     const run = () => page.evaluate(async () => {
       const r = await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] });
       return { passes: r.passes.length, violations: r.violations.map((v) => `${v.id}: ${v.nodes.length} (${v.nodes[0].target.join(" ")})`) };
@@ -165,6 +185,7 @@ for (const scheme of ["light", "dark"]) {
     await page.getByRole("button", { name: "Next issue" }).click();
     const b = await run();
     assert.deepEqual(b.violations, [], "CRC issue selected");
+    assert.deepEqual(await cspViolations(page), [], "CSP violations");
     console.log(`# axe ${scheme}: ${a.violations.length} + ${b.violations.length} violations, ${a.passes} and ${b.passes} rules passed`);
     await page.close();
   });
@@ -266,7 +287,7 @@ test("375 px width and 200% zoom: no horizontal page scroll, controls on screen"
   }
   // 200% text size (browser text-only zoom) at 1280 px.
   const page = await openPage({ viewport: { width: 1280, height: 900 } });
-  await page.addStyleTag({ content: "html { font-size: 30px !important; }" });
+  await page.evaluate(() => { document.documentElement.style.fontSize = "30px"; }); // CSSOM: allowed by the CSP
   const r = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
   assert.ok(r.scroll <= r.width, `200% text: page is ${r.scroll}px wide`);
   await page.close();
@@ -352,7 +373,7 @@ test("unknown message ids are shown as unsupported, separate from CRC errors", a
   await page.locator("#list-table tbody tr", { hasText: "Unsupported id" }).first().locator(".rowbtn").click();
   const decoded = await page.textContent("#decoded");
   assert.match(decoded, /not counted as corrupt/);
-  await page.addScriptTag({ path: AXE });
+  await injectAxe(page);
   const v = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"] })).violations.map((x) => x.id));
   assert.deepEqual(v, [], "axe on the issue view of a malformed capture");
   await page.close();

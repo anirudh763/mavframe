@@ -13,7 +13,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { loadParser, analyze, decodePayload, detectFormat, frameAt, rawEvents, STATUS } from "../../docs/js/core.js";
+import { loadParser, analyze, decodePayload, detectFormat, frameAt, rawEvents, STATUS, MAX_CAPTURE_BYTES } from "../../docs/js/core.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const truth = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/web/sample-truth.json"), "utf8"));
@@ -207,21 +207,42 @@ function chunks(len, size) {
   return r;
 }
 
+// Script under test; WASM_BUILD_SCRIPT lets the sabotage check point it at a modified copy.
+const BUILD_SCRIPT = process.env.WASM_BUILD_SCRIPT || path.join(ROOT, "tools/build_wasm.sh");
+const EXPECTED_SOURCES = ["src/mavframe.c", "web/wasm/mavframe_wasm.c"];
+
 test("the wasm module is compiled from src/mavframe.c itself (no copy) and is up to date", () => {
-  const script = fs.readFileSync(path.join(ROOT, "tools/build_wasm.sh"), "utf8");
-  assert.match(script, /src\/mavframe\.c web\/wasm\/mavframe_wasm\.c/);
   const files = spawnSync("git", ["ls-files", "*.c", "*.h"], { cwd: ROOT }).stdout.toString().trim().split("\n");
   assert.deepEqual(files.filter((f) => path.basename(f) === "mavframe.c"), ["src/mavframe.c"]);
   const zig = spawnSync("python3", ["-c", "import ziglang"]);
   if (zig.status !== 0) {
-    console.log("# ziglang not installed: rebuild comparison skipped here (CI runs it)");
+    console.log("# ziglang not installed: compiler command not checked here (CI runs it)");
     return;
   }
+  // Run the real build with sh -x and read the C files from the compiler
+  // command that actually ran, not from the script text.
   const out = path.join(CASES, "rebuilt.wasm");
-  const b = spawnSync("sh", [path.join(ROOT, "tools/build_wasm.sh"), out]);
+  const b = spawnSync("sh", ["-x", BUILD_SCRIPT, out], { cwd: ROOT });
   assert.equal(b.status, 0, b.stderr.toString());
+  const cc = b.stderr.toString().split("\n").filter((l) => /^\++ python3 -m ziglang cc /.test(l));
+  assert.equal(cc.length, 1, "exactly one compiler command");
+  const compiled = cc[0].split(/\s+/).filter((a) => /\.c$/.test(a));
+  assert.deepEqual(compiled, EXPECTED_SOURCES, "C files given to the compiler");
+  assert.match(b.stdout.toString(), new RegExp(`^sources: ${EXPECTED_SOURCES.join(" ")}$`, "m"));
   assert.ok(fs.readFileSync(out).equals(fs.readFileSync(path.join(ROOT, "docs/mavframe.wasm"))),
     "docs/mavframe.wasm differs from a fresh build of src/mavframe.c");
+});
+
+test("analyze() refuses captures over the size limit and accepts one exactly at it", async () => {
+  // Sized stand-ins instead of real 256 MB buffers: only length and subarray are used.
+  const zeros = new Uint8Array(parser.inputCap);
+  const sized = (length) => ({ length, subarray: (a, b) => zeros.subarray(0, b - a) });
+  await assert.rejects(analyze(sized(MAX_CAPTURE_BYTES + 1), { parser, format: "raw" }),
+    { message: `capture larger than ${MAX_CAPTURE_BYTES / 1048576} MB` });
+  const r = await analyze(sized(MAX_CAPTURE_BYTES), { parser, format: "raw", chunkSize: parser.inputCap, yieldFn: async () => {} });
+  assert.equal(r.byteLength, MAX_CAPTURE_BYTES);
+  assert.equal(r.stats.bytes, MAX_CAPTURE_BYTES);
+  assert.equal(r.skippedBytes, MAX_CAPTURE_BYTES);
 });
 
 test("native and wasm builds give identical events: malformed, signed and chunked input", () => {
@@ -233,6 +254,7 @@ test("native and wasm builds give identical events: malformed, signed and chunke
   };
   let compared = 0;
   for (const [name, bytes] of Object.entries(streams)) {
+    // Read sizes tested: 1, 2, 3, 7, 10, 13, 255, 4096 bytes and the whole stream in one read.
     for (const size of [bytes.length, 1, 2, 3, 7, 10, 13, 255, 4096]) {
       const w = rawEvents(parser, bytes, chunks(bytes.length, size));
       const n = nativeEvents(bytes, [`c${size}`]);
@@ -319,4 +341,18 @@ test("sequence numbers: duplicates and backward steps are not gaps; 255 -> 0 is 
   assert.equal(reset.issues[0].reset, true);
   const late = await analyze(readCase("seq-backwards.bin"), { parser, format: "raw" });
   assert.deepEqual([late.issues[0].kind, late.issues[0].back, late.issues[0].reset], ["reorder", 1, false]);
+});
+
+test("corrupted .tlog frames give CRC errors only: no false rejects from timestamp or frame bytes", async () => {
+  const expect = JSON.parse(fs.readFileSync(path.join(CASES, "corrupt-ts.json"), "utf8"));
+  const r = await analyze(readCase("corrupt-ts.tlog"), { parser, format: "tlog" });
+  assert.equal(r.validFrames, expect.frames);
+  assert.equal(r.crcErrors, expect.crc_errors);
+  assert.equal(r.rejects, 0, "bad-flags issues");
+  assert.equal(r.unsupported, 0, "unsupported issues");
+  assert.equal(r.issues.filter((i) => i.kind !== "crc" && i.kind !== "gap").length, 0);
+  // The parser did see these candidates; all are accounted for as timestamp bytes or damaged-frame bytes.
+  assert.ok(r.stats.bad_flags + r.stats.unknown_msgid > 1000);
+  assert.equal(r.timestampArtifacts + r.insideFailedFrame, r.stats.bad_flags + r.stats.unknown_msgid);
+  assert.equal(r.stats.bad_crc, expect.crc_errors);
 });

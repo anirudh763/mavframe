@@ -133,8 +133,8 @@ export function classifySeq(prev, seq) {
  * control is handed back with opts.yieldFn so a browser stays responsive.
  *
  * In .tlog mode, a rejected candidate that starts inside the 8 timestamp
- * bytes right before a valid frame is a timestamp byte that happened to be
- * 0xFD, not a link error; such events are counted as timestampArtifacts
+ * bytes right before a valid frame or a CRC-failed frame is a timestamp byte
+ * that happened to be 0xFD, not a link error; such events are counted as timestampArtifacts
  * instead of CRC errors / rejects.
  *
  * Issue kinds: "crc" (checksum mismatch: corrupted), "unsupported" (message
@@ -176,13 +176,16 @@ export async function analyze(bytes, opts = {}) {
   const messages = new Map();
   const lastSeq = new Int16Array(65536).fill(-1);
   let timestampArtifacts = 0;
+  let insideFailedFrame = 0;
+  let failedStart = -1;
+  let failedEnd = -1;
   let framesWithTs = 0;
   let lastTs = NaN;
 
   function msgEntry(id) {
     let m = messages.get(id);
     if (!m) {
-      m = { msgid: id, name: messageName(id), count: 0, crcErrors: 0, firstTs: NaN, lastTs: NaN, sources: new Set() };
+      m = { msgid: id, name: messageName(id), count: 0, crcErrors: 0, firstTs: NaN, lastTs: NaN, sources: new Map() };
       messages.set(id, m);
     }
     return m;
@@ -217,10 +220,24 @@ export async function analyze(bytes, opts = {}) {
         const it = { kind, status: e.status, off: e.off,
           msgid: e.msgid, sysid: e.sysid, compid: e.compid, seq: e.seq, len: e.len, flen: e.flen, iflags: e.iflags,
           ts: Number.isNaN(own) ? lastTs : own, frame: n };
+        // After a CRC failure the parser rescans that frame's bytes for
+        // another 0xFD. Candidates it rejects there are pieces of the damaged
+        // frame, already reported as one CRC error, not separate issues.
+        if (kind !== "crc" && e.off > failedStart && e.off < failedEnd) { insideFailedFrame++; continue; }
+        if (kind === "crc") { failedStart = e.off; failedEnd = e.off + e.flen; }
         if (!tlog) { commit(it); continue; }
         // Events arrive in stream order, so the next frame starts after
         // e.off: older pending rejections can no longer sit in its timestamp.
         while (pending.length && pending[0].off < e.off - 8) commit(pending.shift());
+        if (e.status === STATUS.BAD_CRC) {
+          // A CRC failure is a whole candidate frame with a plausible header,
+          // like a valid frame: rejections that began in the 8 bytes before
+          // it were 0xFD bytes in its record's timestamp, not link errors.
+          for (const p of pending) {
+            if (p.kind !== "crc" && p.off >= e.off - 8) { p.artifact = true; timestampArtifacts++; }
+          }
+          for (let k = pending.length - 1; k >= 0; k--) if (pending[k].artifact) pending.splice(k, 1);
+        }
         pending.push(it);
         continue;
       }
@@ -251,10 +268,14 @@ export async function analyze(bytes, opts = {}) {
       }
       const m = msgEntry(e.msgid);
       m.count++;
-      m.sources.add(key);
+      let src = m.sources.get(key);
+      if (!src) m.sources.set(key, (src = { count: 0, firstTs: NaN, lastTs: NaN }));
+      src.count++;
       if (!Number.isNaN(t)) {
         if (Number.isNaN(m.firstTs)) m.firstTs = t;
         m.lastTs = t;
+        if (Number.isNaN(src.firstTs)) src.firstTs = t;
+        src.lastTs = t;
       }
     }
   }
@@ -291,9 +312,11 @@ export async function analyze(bytes, opts = {}) {
   endTs = lastTs;
   const msgList = [...messages.values()].sort((a, b) => a.msgid - b.msgid);
   for (const m of msgList) {
-    const span = (m.lastTs - m.firstTs) / 1e6;
-    m.rateHz = m.count > 1 && span > 0 ? (m.count - 1) / span : NaN;
-    m.sources = [...m.sources].sort((a, b) => a - b).map((k) => [k >> 8, k & 0xff]);
+    const rate = (count, first, last) => (count > 1 && last > first ? ((count - 1) * 1e6) / (last - first) : NaN);
+    // rateHz covers all senders of this message together; each source has its own.
+    m.rateHz = rate(m.count, m.firstTs, m.lastTs);
+    m.sources = [...m.sources].sort((a, b) => a[0] - b[0]).map(([k, v]) =>
+      ({ sysid: k >> 8, compid: k & 0xff, count: v.count, rateHz: rate(v.count, v.firstTs, v.lastTs) }));
   }
   return {
     format,
@@ -317,6 +340,7 @@ export async function analyze(bytes, opts = {}) {
     duplicates: counts.duplicate,
     reorders: counts.reorder,
     timestampArtifacts,
+    insideFailedFrame, // rejected candidates inside a CRC-failed frame (not listed)
     skippedBytes: stats.dropped_bytes - (tlog ? 8 * framesWithTs : 0),
     firstTs,
     endTs,
@@ -425,17 +449,18 @@ function fixed(x, d) {
 
 // Human-readable reading of a raw field value (empty when the raw value says it all).
 export function meaning(f, value) {
+  if (f.invalid !== undefined && value === f.invalid) return "not provided";
   if (f.enum) return enumMeaning(f.enum, value);
   if (typeof value !== "number") return "";
   switch (f.units) {
     case "degE7": return `${fixed(value / 1e7, 7)}°`;
-    case "cdeg": return value === 65535 && f.type === "uint16_t" ? "unknown" : `${fixed(value / 100, 2)}°`;
+    case "cdeg": return `${fixed(value / 100, 2)}°`;
     case "rad": return `${fixed((value * 180) / Math.PI, 2)}°`;
     case "rad/s": return `${fixed((value * 180) / Math.PI, 2)}°/s`;
     case "mm": return `${fixed(value / 1000, 3)} m`;
-    case "cm/s": return value === 65535 && f.type === "uint16_t" ? "unknown" : `${fixed(value / 100, 2)} m/s`;
-    case "mV": return value === 65535 ? "not sent" : `${fixed(value / 1000, 3)} V`;
-    case "cA": return value === -1 ? "not sent" : `${fixed(value / 100, 2)} A`;
+    case "cm/s": return `${fixed(value / 100, 2)} m/s`;
+    case "mV": return `${fixed(value / 1000, 3)} V`;
+    case "cA": return `${fixed(value / 100, 2)} A`;
     case "d%": return `${fixed(value / 10, 1)} %`;
     case "c%": return `${fixed(value / 100, 2)} %`;
     default: return "";

@@ -51,7 +51,13 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 .g-crc { fill: var(--bad); }
 .g-gap { fill: var(--warn); }
 .g-density { fill: var(--density); }
-.swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--border-strong); border-radius: 2px; }
+/* Legend samples look like the hex bytes they describe. */
+.swatch { display: inline-block; padding: 0 2px; border-radius: 2px; color: var(--fg); font-size: .95em; line-height: 1.4; }
+.swatch.seg-pay { box-shadow: inset 0 0 0 1px var(--border); }
+.cap-note { margin: 4px 0 0; }
+td.sources { white-space: normal; }
+td.sources .src { display: block; white-space: nowrap; }
+.decoded table.dense td:first-child { white-space: nowrap; overflow-wrap: normal; }
 
 /* Timeline */
 .timeline-wrap { padding: 10px 14px 8px; }
@@ -68,7 +74,7 @@ progress { width: min(320px, 100%); height: 10px; accent-color: var(--accent); }
 .axis { display: flex; justify-content: space-between; font-size: .8rem; color: var(--fg-muted); margin-top: 2px; }
 
 /* Panes */
-.panes { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 12px; align-items: start; }
+.panes { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 7fr); gap: 12px; align-items: start; }
 .panes.detail { grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); }
 .panes > .box { min-width: 0; }
 .table-wrap { overflow: auto; position: relative; }
@@ -131,4 +137,7 @@ tr.selected, tr.selected:hover { background: var(--accent-subtle); box-shadow: i
   .tagline { display: none; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .footer { padding: 4px 16px 20px; }
+  /* Keep count, rate and CRC errors on screen; sources scroll after them. */
+  #msg-table th, #msg-table td { padding: 3px 5px; white-space: normal; }
+  #msg-table .msgbtn { padding: 0 2px; }
 }

@@ -8,7 +8,7 @@ code is written: no heap allocation, a fixed 280-byte buffer, input accepted
 one byte at a time, and recovery after corrupted bytes. It exists to show that
 a frame parser can be small enough to read in one sitting and still be checked
 against a reference implementation (pymavlink), fuzzed, and measured. It only
-finds and checks frames. It does not decode message fields and it makes no
+finds and checks frames. The library does not decode message fields and it makes no
 decisions about what a message means or whether it should be accepted.
 
 ## Quick start
@@ -68,8 +68,9 @@ python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
 
 ## Browser inspector
 
-Live page (after GitHub Pages is enabled for `main` / `docs`):
-https://anirudh763.github.io/mavframe/
+The page is not published yet; it will be served from `docs/` once GitHub
+Pages is enabled. Locally: `python3 -m http.server -d docs` and open
+http://localhost:8000/.
 
 ![mavframe inspector showing the synthetic sample flight with a CRC error selected](docs/screenshots/inspector.png)
 
@@ -79,8 +80,9 @@ glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
 microsecond timestamp before each frame) or a raw byte stream, or press
 **Load sample flight**. Files are read in the tab and never uploaded.
 
-The page shows a message table (id, name, sending system:component, count, rate
-from .tlog timestamps, CRC errors), a timeline with CRC errors and sequence
+The page shows a message table (id, name, count, rate from .tlog timestamps,
+CRC errors, and the sending system:component with its own rate when more than
+one sends the message), a timeline with CRC errors and sequence
 findings marked, frame and issue lists that can be filtered by message, and the
 selected frame's bytes and decoded fields. Payload fields are decoded for
 HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD,
@@ -90,7 +92,11 @@ types, length and CRC_EXTRA equal pymavlink's.
 
 What the counts mean:
 
-- **CRC errors**: a complete frame whose checksum does not match. Definite.
+- **CRC errors**: a candidate frame (a 0xFD start byte, a plausible header and
+  enough bytes) whose checksum fails. On a noisy link many of these are random
+  bytes that only looked like a header, not damaged real frames. In .tlog mode,
+  candidates that start inside a record's 8 timestamp bytes or inside a frame
+  that already failed its CRC are not reported as separate issues.
 - **Unsupported messages**: a header whose message id is not in the common
   dialect. Its checksum cannot be checked, so it is skipped and not called
   corrupt.
@@ -103,14 +109,17 @@ What the counts mean:
   not checked (that needs the link key).
 - MAVLink v1 frames and other bytes count as skipped bytes. In .tlog mode, a
   0xFD byte inside a timestamp that the parser briefly takes for a frame start
-  is not reported as a link error (20 in the sample).
+  is not reported as a link error (20 in the sample). A test with 2,000 records,
+  200 of them corrupted and many timestamps containing 0xFD, reports exactly
+  200 CRC errors and no other rejects.
 
 Captures up to 256 MB are accepted; larger files get a message instead. Parsing
 runs in 512 kB chunks with a progress bar and a Cancel button. Details are kept
 for the first 4,000,000 frames and 100,000 issues; the counts cover everything.
 
 The sample is synthetic and labelled so on the page: 60 seconds of made-up
-telemetry from a simulated quadrotor, packed by pymavlink
+telemetry for a quadrotor (computed by the script, not taken from a simulator or
+a real flight), packed by pymavlink
 (`tools/gen_sample_tlog.py`), with three frames altered after packing, one frame
 never written and one MAVLink v1 record. The page reports what the generator
 wrote: 1,496 valid frames, 3 CRC errors, 4 sequence gaps (~4 frames missing: the
@@ -121,8 +130,8 @@ dropped frame and the three corrupted ones), 0 duplicates, 0 out of order,
 pip install ziglang==0.17.1
 sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
 cmake --build build                    # also builds build/glue_dump: the same glue, native
-node --test tests/web/test_wasm.mjs    # 14 tests
-node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe-core
+node --test tests/web/test_wasm.mjs    # 16 tests
+node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
 ```
 
 - The wasm and native builds of the same files give identical events (offset,
@@ -144,6 +153,10 @@ node --test tests/web/test_ui.mjs      # 13 tests in Chromium (Playwright) + axe
   main-thread block under 250 ms (126 ms in the last run here). axe-core 4.14
   reports 0 violations in light and dark mode. These are automated checks; a
   manual screen-reader check was not run.
+
+The page sets a Content-Security-Policy: only its own files load, no inline
+scripts or styles, and WebAssembly compilation is allowed (`'wasm-unsafe-eval'`).
+The browser tests fail on any policy violation.
 
 The page uses Atkinson Hyperlegible (SIL Open Font License 1.1, license text in
 `docs/css/OFL-Atkinson-Hyperlegible.txt`).

@@ -12,6 +12,11 @@
   boundary.bin   short stream (valid, signed, bad CRC, unknown id, bad flags,
                  garbage, valid) for splitting at every byte boundary
   signed.tlog    the 20 signed frames as .tlog records (for the browser test)
+  corrupt-ts.tlog  2,000 .tlog records; every 10th frame has a payload byte
+                 changed (CRC error), and timestamps are chosen so that many
+                 hold a 0xFD byte that looks like a frame start (before valid
+                 and before corrupted frames). Expected: exactly 200 CRC
+                 errors, no other issues. Counts in corrupt-ts.json.
   seq-*.bin      HEARTBEATs from one component with chosen sequence numbers
                  (see SEQ_CASES) for the sequence classification tests
 """
@@ -92,6 +97,31 @@ def main():
             out_frames.append(bytes(mav.MAVLink_heartbeat_message(2, 12, 129, 0, 4, 3).pack(lk)))
         with open(os.path.join(out, "seq-%s.bin" % name), "wb") as f:
             f.write(b"".join(out_frames))
+
+    # .tlog with corrupted frames and 0xFD bytes inside timestamps.
+    lk = link(False, 1, 1)
+    recs, crc = bytearray(), 0
+    for i in range(2000):
+        if i % 2:
+            msg = mav.MAVLink_attitude_message(i, 0.1, 0.2, 0.3, 0.01, 0.02, 0.03)
+        else:
+            msg = mav.MAVLink_vfr_hud_message(12.5, 12.0, 90, 55, 50.0, 0.5)
+        fr = bytearray(pack(msg, lk))
+        if i % 10 == 3:
+            fr[12] ^= 0x40
+            crc += 1
+        ts = bytearray(struct.pack(">Q", 1767225600000000 + i * 20000))
+        if i % 4 == 0:
+            ts[6] = 0xFD                 # fake header whose flags byte is the real 0xFD: bad flags
+        elif i % 4 == 1:
+            ts[5], ts[7] = 0xFD, 0x00    # fake header with msgid = seq | sys<<8 | comp<<16: unknown id
+        elif i % 4 == 2:
+            ts[7] = 0xFD                 # fake header whose length byte is the real 0xFD
+        recs += ts + fr
+    with open(os.path.join(out, "corrupt-ts.tlog"), "wb") as f:
+        f.write(recs)
+    with open(os.path.join(out, "corrupt-ts.json"), "w", encoding="utf-8") as f:
+        f.write('{"records": 2000, "crc_errors": %d, "frames": %d}\n' % (crc, 2000 - crc))
 
     boundary = (hb + signed[0] + bytes(flipped) + unknown + bytes(badflags) + noise[:9] + frames[5])
     with open(os.path.join(out, "boundary.bin"), "wb") as f:
