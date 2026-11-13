@@ -186,8 +186,12 @@ for (const [scheme, width, height] of [["light", 1280, 900], ["dark", 1280, 900]
     assert.deepEqual(a.violations, [], "frame selected");
     assert.ok(a.passes > 20, `axe ran ${a.passes} passing rules`);
     await page.getByRole("button", { name: "Next issue" }).click();
-    // Let the 120 ms button colour transitions finish, or axe samples a mid-fade colour.
-    await page.evaluate(() => Promise.all(document.getAnimations().map((x) => x.finished)));
+    // Let the 120 ms button colour transitions settle, or axe samples a mid-fade colour.
+    // A transition that is replaced (the re-render restyles a button again) rejects its
+    // `finished` promise with AbortError, so wait with allSettled until none are left.
+    await page.evaluate(async () => {
+      for (let anims; (anims = document.getAnimations()).length;) await Promise.allSettled(anims.map((x) => x.finished));
+    });
     const b = await run();
     assert.deepEqual(b.violations, [], "CRC issue selected");
     assert.deepEqual(await cspViolations(page), [], "CSP violations");
