@@ -5,6 +5,7 @@
  *   mavframe-bench <stream file> [repetitions=11] [passes per repetition=20]
  */
 #define _POSIX_C_SOURCE 199309L
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -83,6 +84,42 @@ static void run(const char *name, unsigned long (*fn)(const uint8_t *, size_t, u
     free(t);
 }
 
+/* Read the whole stream. A regular file is sized with fseek/ftell; a pipe or
+ * other non-seekable input (ftell fails) is read in growing chunks instead.
+ * Returns NULL, with nothing left allocated, on any read or allocation error. */
+static uint8_t *read_all(FILE *f, long *size)
+{
+    size_t cap = 1u << 16, len = 0, n;
+    uint8_t *buf, *tmp;
+    long end = -1;
+
+    /* The size is only a hint (a directory reports LONG_MAX), so it is capped;
+     * the loop below grows the buffer for anything larger. */
+    if (fseek(f, 0, SEEK_END) == 0 && (end = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0)
+        cap = (size_t)(end < (1L << 28) ? end : (1L << 28)) + 1;
+    else
+        clearerr(f);
+    if (!(buf = malloc(cap)))
+        return NULL;
+    while ((n = fread(buf + len, 1, cap - len, f)) > 0) {
+        len += n;
+        if (len == cap) {
+            if (cap > (size_t)LONG_MAX / 2 || !(tmp = realloc(buf, cap * 2))) {
+                free(buf);
+                return NULL;
+            }
+            buf = tmp;
+            cap *= 2;
+        }
+    }
+    if (ferror(f)) {
+        free(buf);
+        return NULL;
+    }
+    *size = (long)len;
+    return buf;
+}
+
 int main(int argc, char **argv)
 {
     FILE *f;
@@ -95,13 +132,12 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s <stream file> [repetitions] [passes]\n", argv[0]);
         return 1;
     }
-    fseek(f, 0, SEEK_END);
-    size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    data = malloc((size_t)size + 1);
-    if (!data || fread(data, 1, (size_t)size, f) != (size_t)size)
-        return 1;
+    data = read_all(f, &size);
     fclose(f);
+    if (!data) {
+        fprintf(stderr, "%s: cannot read %s\n", argv[0], argv[1]);
+        return 1;
+    }
     printf("stream: %ld bytes, %d repetitions x %d passes\n", size, reps, passes);
     run("chunked", parse_chunked, data, (size_t)size, reps, passes);
     run("bytewise", parse_bytewise, data, (size_t)size, reps, passes);

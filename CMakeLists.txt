@@ -46,6 +46,15 @@ add_executable(test_mavframe tests/test_mavframe.c)
 target_link_libraries(test_mavframe PRIVATE mavframe)
 add_test(NAME unit COMMAND test_mavframe)
 
+# mavframe-bench reads a pipe (not seekable) in full, and an unreadable input
+# exits 1 with a message. Under ASan a leak would exit 23 instead and fail these.
+add_test(NAME bench_pipe COMMAND sh -c
+  "out=$(head -c 3000 \"$0\" | \"$1\" /dev/stdin 1 1) && echo \"$out\" | grep -q '^stream: 3000 bytes'"
+  ${CMAKE_CURRENT_SOURCE_DIR}/docs/sample/sample-flight.tlog $<TARGET_FILE:mavframe-bench>)
+add_test(NAME bench_unreadable COMMAND sh -c
+  "\"$0\" \"$1\" 1 1 2>&1 | grep -q 'cannot read'; test $? -eq 0 && { \"$0\" \"$1\" 1 1 2>/dev/null; test $? -eq 1; }"
+  $<TARGET_FILE:mavframe-bench> ${CMAKE_CURRENT_SOURCE_DIR}/docs)
+
 # Native build of the WebAssembly glue, compared with the wasm build by tests/web/test_wasm.mjs.
 add_executable(glue_dump tests/web/glue_dump.c web/wasm/mavframe_wasm.c src/mavframe.c)
 target_include_directories(glue_dump PRIVATE include)
