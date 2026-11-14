@@ -277,6 +277,36 @@ test("error and empty states: empty file, not a MAVLink file, oversized file, ne
   await noWasm.close();
 });
 
+test("Cancel during the final browser handoff keeps the previous capture", async () => {
+  const page = await openPage({ route: (p) => p.addInitScript(() => {
+    const NativeChannel = window.MessageChannel;
+    window.MessageChannel = class extends NativeChannel {
+      constructor() {
+        super();
+        const post = this.port2.postMessage.bind(this.port2);
+        this.port2.postMessage = (...args) => {
+          if (window.__holdFinalHandoff && document.getElementById("progress")?.value === 100) {
+            window.__releaseFinalHandoff = () => post(...args);
+          } else post(...args);
+        };
+      }
+    };
+  }) });
+  const sourceBefore = await page.textContent("#source");
+  await page.evaluate(() => { window.__holdFinalHandoff = true; });
+  await page.setInputFiles("#file", { name: "final-handoff.tlog", mimeType: "application/octet-stream",
+    buffer: fs.readFileSync(path.join(ROOT, truth.file)) });
+  await page.waitForFunction(() => typeof window.__releaseFinalHandoff === "function");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.evaluate(() => window.__releaseFinalHandoff());
+  await page.waitForFunction(() => !document.getElementById("load-sample").disabled);
+  assert.match(await statusText(page), /Cancelled parsing final-handoff.tlog. Still showing sample-flight.tlog/);
+  assert.equal(await page.textContent("#source"), sourceBefore);
+  assert.equal(await page.isHidden("#cancel"), true);
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
 test("parsing can be cancelled; the previous capture stays", async () => {
   const page = await openPage();
   const sample = fs.readFileSync(path.join(ROOT, truth.file));

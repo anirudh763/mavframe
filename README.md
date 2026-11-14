@@ -132,9 +132,10 @@ details and packet bytes panes):
   Header tabs.
 - **Export finding (JSON)**: one row as a portable JSON file with the mavframe
   version, file name, size and SHA-256, offsets, CRC wire vs computed and the
-  parser's assumptions. Payload bytes are left out unless the message carries
-  no position (HEARTBEAT, SYS_STATUS, ATTITUDE) or you tick "Include raw
-  payload bytes".
+  parser's assumptions. All payload bytes are left out unless you tick
+  "Include all payloads"; raw bytes may contain GPS/position or other sensitive
+  data. Header-only unsupported/bad-flags candidates cannot export a payload
+  or CRC because their frame boundaries are not established.
 - **Format help** (`#/help`): the frame layout, what CRC failed vs unsupported
   means, and the sequence-gap assumptions.
 

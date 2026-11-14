@@ -69,7 +69,7 @@ export function anatomy(result, bytes, parser, info) {
     groups.push({ id: "payload", title: "Payload", fields: plen ? [F("payload", "Payload bytes", p0, p0 + plen, `${plen} bytes`, why)] : [], note: why });
   }
 
-  const crc = crcOf(b, parser, off);
+  const crc = info.check === "valid" || info.check === "crc" ? crcOf(b, parser, off) : null;
   if (crc) {
     const reading = crc.computed === null ? "computed: not possible (no CRC_EXTRA for this message id)"
       : crc.computed === crc.wire ? "matches" : "does not match";
