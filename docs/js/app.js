@@ -644,9 +644,11 @@ function renderDetail(route) {
       el("div", {}, el("span", { class: "k", text: "Computed CRC" }), el("span", { class: "v", text: computed })),
       el("div", { class: `verdict ${verdict[0]}` }, el("span", { class: "k", text: "Result" }), el("span", { class: "v", text: verdict[1] })));
   } else {
-    const why = info.check === "unsupported" || info.check === "reject"
-      ? "not checked: only the candidate header was retained"
-      : "cut off at the end of the capture";
+    const why = info.check === "unsupported"
+      ? "Not checked: no CRC_EXTRA; only the candidate header was retained"
+      : info.check === "reject"
+        ? "Not checked: unsupported flags; only the candidate header was retained"
+        : "cut off at the end of the capture";
     cc.replaceChildren(el("div", {}, el("span", { class: "k", text: "CRC" }), el("span", { class: "v", text: why })));
   }
 

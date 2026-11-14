@@ -335,6 +335,7 @@ test("unsupported message ids are explained as not checked, not corrupt; axe sta
   await page.waitForSelector("#detail-notes .note");
   assert.match(await page.textContent("#detail-notes"), /not counted as corrupt/);
   assert.match(await page.textContent("#crc-compare"), /Not checked: no CRC_EXTRA/);
+  assert.match(await page.textContent("#crc-compare"), /only the candidate header was retained/);
   const a = await axeViolations(page);
   assert.deepEqual(a.violations, [], "axe on an unsupported row of a malformed capture");
   await page.close();
