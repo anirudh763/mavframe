@@ -1,116 +1,96 @@
 ---
-version: 2
-name: Mavframe inspector
-supersedes: "version 1 (dark-first, single page); replaced by the root-approved light system of 2026-11-13"
+version: 3
+name: Mavframe packet bench
+supersedes: "version 2 shared 216px rail; independent composition selected 2026-11-13"
 files: { base: docs/css/ui.css, app: docs/css/inspector.css, theme-before-paint: docs/js/theme.js }
-dial: ENERGY 1 / RHYTHM 2 / MOTION 1
-theme: { default: light, dark: "opt-in only, via the labelled 'Dark theme' toggle (aria-pressed), remembered in localStorage inside try/catch; never from prefers-color-scheme" }
-colors:   # light / dark (dark values are only used after the explicit choice)
-  canvas:   { light: "#f7f8fa", dark: "#0f1720", use: "page background" }
-  surface:  { light: "#ffffff", dark: "#16202b", use: "location header, tables, panes, inputs" }
-  rail:     { light: "#f0f3f5", dark: "#121b24", use: "left rail / menu sheet, table header cells" }
-  ink:      { light: "#152536", dark: "#e4ebf2", use: "text" }
-  muted:    { light: "#4b5e6f", dark: "#a6b4c2", use: "secondary text, legends, hex offsets" }
-  input:    { light: "#748694", dark: "#7f909f", use: "control boundaries (>= 3:1)" }
-  divider:  { light: "#dce2e8", dark: "#2c3a48", use: "1px borders" }
-  primary:  { light: "#005a9c", dark: "#7cbdf2", use: "links, primary action, current nav item, selected field bytes" }
-  positive: { light: "#12633c", dark: "#6fd19a", use: "'Valid CRC' (always with text)" }
-  warning:  { light: "#925400", dark: "#e9b064", use: "sequence notes, CRC byte underline (always with text)" }
-  danger:   { light: "#b42318", dark: "#ff9b8f", use: "'CRC failed' (always with text)" }
-  hex-tints: { seg-ts: "#eef1f4", seg-hdr: "#e5eff7", seg-pay: "#ffffff", seg-crc: "#fcf1dd", seg-sig: "#e3f2e9", note: "decorative; each region also has its own underline pattern (dotted / solid / none / double / dashed)" }
+dial: ENERGY 2 / RHYTHM 2 / MOTION 1
+theme: { default: light, dark: "explicit, remembered 'Dark theme' toggle; never inferred from OS preference" }
+colors:
+  canvas: { light: "#f6f5f2", dark: "#1c1b26", use: "porcelain work surface" }
+  surface: { light: "#ffffff", dark: "#252430", use: "opaque packet panes and commands" }
+  rail: { light: "#eeece7", dark: "#2e2d3a", use: "table headers, status strip, narrow command menu" }
+  ink: { light: "#25243a", dark: "#f2efea", use: "graphite text and frame-list heading" }
+  muted: { light: "#595766", dark: "#c1bbc7", use: "secondary text and byte offsets" }
+  input: { light: "#807c80", dark: "#928c98", use: "control boundaries" }
+  divider: { light: "#d8d4cd", dark: "#4e4956", use: "data and pane separators" }
+  primary: { light: "#9a4300", dark: "#ffb67c", use: "burnt-orange action, current route and linked field selection" }
+  positive: { light: "#246043", dark: "#8ad4a8", use: "Valid CRC, always named" }
+  warning: { light: "#855000", dark: "#f0c478", use: "sequence assumptions and CRC-region mark" }
+  danger: { light: "#ae2823", dark: "#ffaaa2", use: "CRC failed, always named" }
 typography:
-  ui: { family: "Atkinson Hyperlegible (local woff2, SIL OFL 1.1)", body: "16px / 1.5", h1: "30px / 1.2 (26px under 600px)", h2: "20px", numbers: "tabular-nums" }
-  mono: { family: "system monospace", size: 14px, use: "ONLY hex bytes, byte offsets, CRC/hash values, code" }
-spacing: [4, 8, 16, 24, 32]
-controls: { min-target: 44px, radius: 7px, focus: "2px primary outline, 2px offset" }
-elevation: "flat: 1px divider borders, no shadows, no gradients"
-layout:
-  desktop: ">= 1000px: 216px rail (wordmark 'Mavframe', purpose line, 'Inspect' group: Capture, Frames; 'Learn' group: Format help; theme toggle and source link at the foot) + white location header (← Back on contextual screens, breadcrumb 'Mavframe / Screen') + workspace with 32px gutter, content max 1100px"
-  intermediate: "< 1000px: no permanent rail; a labelled Menu button opens the rail as a modal sheet (focus kept inside, Escape closes, focus returns to Menu)"
-  mobile: "< 600px: 16px gutter"
+  ui: { family: "system-ui, platform sans-serif", body: "16px / 1.5", h1: "28px / 1.2; 26px on phone", use: "commands, headings and prose" }
+  mono: { family: "system monospace", size: 14px, use: "packet field names, bytes, byte offsets, hex values, IDs and code" }
+controls: { target: "44 x 44px", radius: 4px, focus: "2px primary outline plus 2px offset" }
+elevation: "opaque flat surfaces, no decorative shadows, gradients, blur or animation"
 ---
 
-# Mavframe inspector design
+# Packet bench
 
-## Signature pattern: packet analyzer
+The design read is a dense instrument for examining linked packet representations. Horizontal commands keep the entire
+desktop width available to captures. Porcelain separates the working area from white data surfaces; graphite gives the
+frame-list heading a clear anchor in grayscale. Burnt orange identifies actions and the current selection. It is separate
+from the red, green and amber state colors, which always include words or region patterns. System sans keeps controls and
+explanations readable; monospace gives fields and byte positions a stable alignment. ENERGY 2 / RHYTHM 2 / MOTION 1:
+the selected packet is the focal point, with no entrance animation or decorative assets.
 
-The inspector is a Wireshark-style packet analyzer over the real parser output, with three linked views:
+The UI/UX design search in `Downloads/active/design-searches/Mavframe-narrow.md` supports a data-dense dashboard style.
+Its enterprise gateway/marketing composition, blue palette and remote font suggestions are rejected. The council's
+capture command bar and linked packet bench determine composition, palette and type.
 
-1. **Frame list**: one row per valid frame and per rejected candidate (CRC failed, unsupported id, bad flags), in byte order.
-   Columns: Check, Message, Time (s), Offset, Sys:Comp, Seq, Note (Check first so a CRC failure is visible at 320px). Filters are chips (All, Issues, CRC failed, Unsupported,
-   Valid CRC) and a Message select; the filter, page and selection are in the URL.
-2. **Field tree**: the selected row's tlog timestamp, header fields, decoded payload fields, CRC and signature, each a button
-   with its byte range.
-3. **Bytes**: hex and ASCII, regions tinted and underlined.
+## Composition and reflow
 
-Selection is linked both ways: a field highlights its bytes, a click on a byte selects its field, and with the bytes focused
-Left/Right move between fields (the keyboard path). The CRC wire and computed values sit side by side above the panes.
+- Desktop commands form one compact horizontal masthead: wordmark and purpose, Capture / Frames / Format help, explicit
+  theme choice and source link. There is one page banner. Location and Back are a labelled region, without a second banner.
+- Capture begins with the real horizontal file/sample/format command bar and an adjoining status/progress strip. The
+  loaded capture follows as a source line, numeric summary, qualified assumptions and a message-type table. Counts come
+  from the parser; the sample is labelled synthetic and never presented as a real flight.
+- At `(min-width: 1200px) and (min-height: 880px)`, Frames fills the available desktop height. The left column contains
+  heading, qualified capture counts, timeline, filters and independently scrolling frame rows. The right column contains
+  CRC wire/computed/result, the independently scrolling field tree, bytes and payload-opt-in export. The existing
+  threshold and route adaptation remain unchanged. The masthead replaces the old sidebar; the redundant location line
+  is visually hidden on this screen, while its breadcrumb remains available to assistive technology.
+- At 1440x900, eight 44px header field targets, room for at least eight byte rows, frame rows and Export fit in the
+  viewport. Header fields come first in the tree. Notes, timestamp, CRC and payload fields remain reachable by pane scroll.
+- Smaller or shorter displays keep Frames and Frame details as two steps. Details has Decoded / Bytes / Header tabs.
+  The intermediate 600–999px range uses a compact Menu and contextual details, rather than a squeezed analyzer.
+- Below 1000px the labelled Menu opens the existing modal command sheet: focus stays inside, Escape closes it, and
+  focus returns to Menu. At 320px the controls wrap, metrics use two columns and wide tables scroll only in their named
+  regions. At 768px the summary expands naturally. Hex adapts from 16 to 8 or 4 bytes per row including ASCII.
 
-- Where the analyzer is usable, `(min-width: 1200px) and (min-height: 880px)`, the Frames screen fills the viewport
-  height with no page scrolling. The left column holds the heading, counts, assumption line, timeline, filters and the
-  scrolling frame list. The right column, at full height, holds CRC wire vs computed, the field tree (header fields
-  first: all 8 fit without inner scrolling) and the bytes (room for 8 rows), then Export. `#/frames/<index>` selects a
-  row on this screen: title, H1 and breadcrumb stay "Frames", with no Back link. Selecting a row keeps keyboard focus in
-  the list, and arrow keys move the selection. The threshold was measured: the 8 header rows (44px targets), 8 hex rows,
-  the CRC row and Export need about 820px below the location header.
-- Below that size (for example 1024x768 or 1280x720) Frames and Frame details are two steps, as on narrow screens:
-  `#/frames/<index>` is the Frame details screen with Back, title "Frame details" and Decoded / Bytes / Header tabs.
-- The hex pane shows 16 bytes per row and falls back to 8 or 4 when a row (with its ASCII column) does not fit.
-- Elsewhere the same URL is its own **Frame details** screen with **Decoded / Bytes / Header** tabs (ARIA tabs, arrow keys).
-
-Reference: Wireshark User's Guide, "Working With Captured Packets"
-(https://www.wireshark.org/docs/wsug_html_chunked/ChapterWork.html): "Clicking on an item in the tree will highlight the
-corresponding bytes in the byte view."
-
-## Routes
+## Routes and interaction
 
 | Route | Screen |
 |---|---|
-| `#/capture` (default) | Open a file or the engineering sample; summary, assumptions, message types |
-| `#/frames?check=&msg=&page=` | Timeline, filters, frame list (and the analyzer panes on wide screens) |
-| `#/frames/<index>?tab=&f=` | Frame details (contextual; not in the global nav) |
+| `#/capture` | Open a file or the engineering sample; summary and message types |
+| `#/frames?check=&msg=&page=` | Timeline, filters and frame list; analyzer when it fits |
+| `#/frames/<index>?tab=&f=` | Selected frame in the wide analyzer; contextual Details otherwise |
 | `#/help` | Format help |
-| anything else under `#/` | Not found, with a link to Capture |
+| other `#/` paths | Not found, with Capture link |
 
-Old single-page links (`#view=issues&msg=30&sel=f12`) are mapped to these routes. Every route change sets
-`document.title` to "Screen – Mavframe" for the screen actually shown (Frames on wide screens, Frame details on narrow
-ones), updates the breadcrumb and `aria-current`, and moves focus to the new screen's H1 (tabindex=-1, no outline).
-Selecting a row on the same wide screen keeps focus on the row instead.
+Legacy `#view=issues&msg=30&sel=f12` links still map into these routes. Route, title, H1, breadcrumb and current navigation
+agree. Back preserves filters. Wide row selection keeps list focus, ArrowUp/Down moves the selection, selecting a field
+highlights its byte range, and clicking a byte selects its field. Left/Right in the bytes provide the keyboard equivalent.
+Selection, filter and tab state remain in the URL. No parser, analysis or export logic belongs in visual styling.
 
-## Targets and type
+## Accessibility and truthful states
 
-- Every interactive element is at least 44 x 44 px (nav links, wordmark, Back, Menu, theme toggle, chips, selects, tabs,
-  row links, field buttons, pager, export button and the checkbox's label). Links inside sentences are the WCAG 2.5.8
-  inline exception. `tests/web/test_routes.mjs` measures all of them on every screen at 320 and 1440px and proves the
-  check fails when nav links, tabs and Menu are shrunk to 24px.
-- Monospace only for hex bytes, byte offsets and hex values (CRC, flags); decimal field values use the UI face. Text
-  wraps at word boundaries; only monospace hex values may break anywhere.
+Normal text needs 4.5:1 and focus/control boundaries need 3:1. Targets stay at least 44px, including nav, filters, field
+buttons, tabs, pager, export and the checkbox label. Prose links use the inline exception. Focus remains visible;
+200% text/zoom reflows and the root font follows the browser's default. Reduced-motion users get no transitions.
 
-## Honesty in the UI
+Every data screen retains loading, empty, no-match, error and out-of-range selection states. Progress and cancellation
+use existing status announcements. Unsupported IDs are not CRC failures. Signatures are present but not verified.
+Sequence-gap estimates carry the fully-observed-channel and in-order-arrival assumptions; they do not establish radio loss.
+The AI-assistance disclosure stays visible in Format help.
 
-- CRC failed (checksum mismatch) and Unsupported (not checked) are separate checks, separate filters and separate words.
-- "signature present; not verified" wherever a signed frame appears.
-- Sequence gaps always carry the one-fully-observed-channel, in-order-arrival assumption.
-- The bundled sample is labelled an engineering fixture, not a real flight, on Capture and Frames.
-- The finding export leaves out all payload bytes unless the user opts in. A damaged message id cannot establish that raw bytes are safe to share. Header-only candidates export neither payload nor an inferred CRC because their frame boundaries are not established.
+JSON exports omit all raw payloads unless the user explicitly opts in, including familiar message IDs and damaged headers.
+Header-only unsupported/bad-flags candidates export neither payload nor an inferred CRC. A visual change must not change
+this boundary or the cancellation race fix. The C source, headers, Wasm, analysis core, generated definitions and sample
+capture remain byte-identical.
 
-## States
+## Verification
 
-Every data screen has loading ("Parsing the capture…"), empty ("No capture is loaded yet" + Go to Capture), no-match
-("No rows match these filters" + Clear filters), out-of-range row and error (status line, `role=status`) states.
-
-## Gates
-
-`tests/web/test_routes.mjs` (root visual gate, analyzer, export), `tests/web/test_ui.mjs` (behaviour, contrast) and
-`tests/web/test_finding.mjs` (row model and export) must pass.
-
-## Rules applied from the reference repos
-
-- ui-ux-pro-max-skill `src/ui-ux-pro-max/templates/base/quick-reference.md`: line 88 `touch-target-size` (44 px), line 69
-  `color-not-only` (every status has text), line 53 navigation (predictable Back, deep linking).
-- anti-slop `skills/antislop-ui/SKILL.md` lines 20-25 (no default gradients) and 39-43 (shadow only as an elevation marker:
-  this UI is flat); `skills/antislop-layoutmobile/SKILL.md` lines 41-42 (design the 600-1024px band: Menu sheet below
-  1000px, two-step route layout tested at 1024x768 and 1280x720).
-- awesome-design-md: token front matter plus prose order for this file; `design-md/linear.app/DESIGN.md` line 264 (mono
-  reserved for code) informs the mono-only-for-hex rule. axe-core: 0 violations on every screen, light and dark,
-at 1280 and 320 px.
+Existing `test_finding.mjs`, `test_routes.mjs` and `test_ui.mjs` cover row and export behavior, real route transitions,
+linked selection, 44px targets (including deliberate shrink sabotage), theme persistence, both-theme contrast and axe.
+Only the obsolete 216px rail and blue-palette assertions change for version 3. Desktop, 768px and 320px screenshots,
+including grayscale silhouettes, are inspected in `Downloads/active/mavframe-packet-bench-evidence`.

@@ -6,7 +6,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Capture – Mavframe</title>
 <meta name="description" content="Inspect MAVLink v2 telemetry captures (.tlog or raw bytes) in the browser with the mavframe C parser compiled to WebAssembly. Files never leave your machine.">
-<meta name="theme-color" content="#f7f8fa">
+<meta name="theme-color" content="#f6f5f2">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/ui.css">
@@ -17,21 +17,18 @@
 <body>
 <a class="skip" href="#workspace" id="skip">Skip to content</a>
 <div class="app">
+ <header class="command-header">
   <div id="sheet" class="rail">
-   <aside class="rail-inner" aria-label="Mavframe menu">
+   <div class="rail-inner">
     <div class="wordmark">
       <a class="brand" href="#/capture">Mavframe</a>
-      <p class="purpose">From bytes to frames</p>
+      <p class="purpose">MAVLink v2 packet bench</p>
     </div>
     <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
     <nav aria-label="Main" class="nav">
-      <p class="nav-group" id="g-work">Inspect</p>
-      <ul aria-labelledby="g-work">
+      <ul>
         <li><a href="#/capture" data-route="capture">Capture</a></li>
         <li><a href="#/frames" data-route="frames">Frames</a></li>
-      </ul>
-      <p class="nav-group" id="g-learn">Learn</p>
-      <ul aria-labelledby="g-learn">
         <li><a href="#/help" data-route="help">Format help</a></li>
       </ul>
     </nav>
@@ -39,16 +36,18 @@
       <button type="button" class="btn" id="theme-toggle" aria-pressed="false">Dark theme</button>
       <a href="https://github.com/anirudh763/mavframe">Source on GitHub</a>
     </div>
-   </aside>
+   </div>
   </div>
+ </header>
   <div class="scrim" id="scrim" hidden></div>
 
   <div class="main-col" id="main-col">
-    <header class="workspace-header">
+    <div class="workspace-header" role="region" aria-label="Location and navigation">
       <button type="button" class="btn" id="menu-btn" aria-expanded="false" aria-controls="sheet">Menu</button>
+      <span class="mobile-brand">Mavframe</span>
       <a class="back" id="back-link" href="#/frames" hidden>← Back</a>
       <nav aria-label="Breadcrumb" class="crumbs"><ol id="crumbs"><li>Mavframe</li><li aria-current="page">Capture</li></ol></nav>
-    </header>
+    </div>
 
     <main id="workspace" tabindex="-1">
       <noscript><p class="noscript" id="noscript">JavaScript is turned off, so the inspector cannot load its parser and the buttons do nothing. Captures are parsed in this tab by WebAssembly started from JavaScript; nothing is uploaded. Turn on JavaScript for this page, or use the command-line tool from the repository: <code>mavframe-dump capture.bin</code>.</p></noscript>
@@ -155,7 +154,7 @@
 
           <div class="analyzer">
             <div class="pane pane-list">
-              <h2 class="sr-only" id="h-list">Frame list</h2>
+              <h2 class="pane-heading" id="h-list">Frame list</h2>
               <div class="table-wrap list-wrap" id="frame-region" role="region" aria-label="Frame rows" tabindex="0">
                 <table id="frame-table" class="dense rows">
                   <thead><tr>
