@@ -422,11 +422,18 @@ test("gate 2: the mobile Menu opens a sheet, keeps focus inside, closes with Esc
     assert.equal(await menu.getAttribute("aria-expanded"), "false");
     await page.close();
   }
-  // Desktop: the 216 px rail is permanent and the Menu button is not shown.
+  // Desktop: commands run across the top without reserving a sidebar column.
   const page = await openPage({ viewport: { width: 1440, height: 900 } });
   assert.equal(await page.isVisible("#menu-btn"), false);
-  const rail = await page.$eval("#sheet", (e) => Math.round(e.getBoundingClientRect().width));
-  assert.equal(rail, 216);
+  const commands = await page.$eval("#sheet", (e) => {
+    const r = e.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  });
+  assert.equal(commands.x, 0);
+  assert.equal(commands.y, 0);
+  assert.equal(commands.width, 1440);
+  assert.ok(commands.height < 100, `compact horizontal commands: ${commands.height}px`);
+  assert.equal(await page.$eval("#workspace", (e) => e.getBoundingClientRect().x), 0);
   await page.close();
 });
 
@@ -532,37 +539,37 @@ for (const [theme, width] of [["light", 1280], ["dark", 1280], ["light", 320], [
 test("gate 6: light is the default even when the OS prefers dark; dark is an explicit, remembered choice", async () => {
   const page = await openPage({ colorScheme: "dark" });
   const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  assert.equal(await bg(), "rgb(247, 248, 250)", "canvas #f7f8fa under OS dark");
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector(".workspace-header")).backgroundColor), "rgb(255, 255, 255)");
+  assert.equal(await bg(), "rgb(246, 245, 242)", "porcelain canvas #f6f5f2 under OS dark");
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector(".command-header")).backgroundColor), "rgb(255, 255, 255)");
   const toggle = page.getByRole("button", { name: "Dark theme" });
   assert.equal(await toggle.getAttribute("aria-pressed"), "false");
   await toggle.click();
   assert.equal(await toggle.getAttribute("aria-pressed"), "true");
-  assert.notEqual(await bg(), "rgb(247, 248, 250)");
+  assert.notEqual(await bg(), "rgb(246, 245, 242)");
   await page.reload();
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await page.getAttribute("html", "data-theme"), "dark", "choice remembered");
   await page.getByRole("button", { name: "Dark theme" }).click();
-  assert.equal(await bg(), "rgb(247, 248, 250)");
+  assert.equal(await bg(), "rgb(246, 245, 242)");
   // Blocked storage: still light, no errors.
   const blocked = await openPage({ colorScheme: "dark", route: (p) => p.addInitScript(() => {
     Object.defineProperty(window, "localStorage", { get() { throw new Error("blocked"); } });
   }) });
-  assert.equal(await blocked.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(247, 248, 250)");
+  assert.equal(await blocked.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(246, 245, 242)");
   await blocked.getByRole("button", { name: "Dark theme" }).click();
   assert.deepEqual(blocked.errors, []);
   await blocked.close();
   await page.close();
 });
 
-test("gate 7: no console errors or CSP violations across all routes; primary colour is #005a9c", async () => {
+test("gate 7: no console errors or CSP violations across all routes; primary colour is #9a4300", async () => {
   const page = await openPage();
   for (const hash of await screenHashes(page)) {
     await page.goto(base + hash);
     await settle(page);
   }
   const primary = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--primary").trim());
-  assert.equal(primary.toLowerCase(), "#005a9c");
+  assert.equal(primary.toLowerCase(), "#9a4300");
   assert.deepEqual(await cspViolations(page), []);
   assert.deepEqual(page.errors, []);
   await page.close();
