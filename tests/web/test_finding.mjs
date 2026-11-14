@@ -63,9 +63,11 @@ test("ATTITUDE at offset 13866 is a CRC failure: wire 0xA4FE vs computed 0x66D8 
   assert.equal(f.finding.message.name, "ATTITUDE");
   assert.deepEqual(f.finding.crc, { wire: "0xA4FE", computed: "0x66D8", match: false });
   assert.equal(f.file.engineering_fixture, true);
-  // ATTITUDE carries no position, so its payload bytes are exported.
+  // Raw bytes require opt-in even for a familiar message id.
+  assert.equal(f.bytes.payload_hex, undefined);
+  const included = await buildFinding({ result, bytes: SAMPLE, parser, ref, fileName: "sample-flight.tlog", includeAllPayloads: true });
   const plen = SAMPLE[13866 + 1];
-  assert.equal(f.bytes.payload_hex, hexOf(SAMPLE.subarray(13866 + 10, 13866 + 10 + plen)));
+  assert.equal(included.bytes.payload_hex, hexOf(SAMPLE.subarray(13866 + 10, 13866 + 10 + plen)));
 });
 
 test("finding export: version, file hash and assumptions are recorded", async () => {
@@ -108,6 +110,48 @@ test("finding export leaves out raw GPS/position payloads by default", async () 
     // Opting in is the only way to get them.
     const g = await buildFinding({ result, bytes: SAMPLE, parser, ref, fileName: "x.tlog", includeAllPayloads: true });
     assert.equal(g.bytes.payload_hex, payloadHex);
+  }
+});
+
+test("a damaged GPS message id cannot opt its payload into the default export", async () => {
+  const { buildFinding } = await mod("finding.js");
+  const { rowIndex, rowInfo } = await mod("rows.js");
+  const idx = rowIndex(result);
+  let gps;
+  for (let k = 0; k < idx.length && !gps; k++) {
+    const info = rowInfo(result, idx.at(k));
+    if (info.msgid === 24 && info.check === "valid") gps = info;
+  }
+  assert.ok(gps, "sample has a valid GPS_RAW_INT frame");
+  const bytes = SAMPLE.slice(gps.off, gps.off + gps.flen);
+  const payloadHex = hexOf(bytes.subarray(10, 10 + bytes[1]));
+  bytes[7] = 30; // A damaged id now says ATTITUDE; the payload is still GPS data.
+  const damaged = await core.analyze(bytes, { parser, format: "raw" });
+  const ref = rowIndex(damaged).at(0);
+  const finding = await buildFinding({ result: damaged, bytes, parser, ref, fileName: "damaged.raw" });
+  assert.equal(finding.finding.kind, "crc_failure");
+  assert.equal(finding.finding.message.id, 30);
+  assert.equal(finding.bytes.payload_hex, undefined);
+  assert.ok(!JSON.stringify(finding).includes(payloadHex), "GPS bytes stay out of the default JSON");
+  const included = await buildFinding({ result: damaged, bytes, parser, ref, fileName: "damaged.raw", includeAllPayloads: true });
+  assert.equal(included.bytes.payload_hex, payloadHex);
+});
+
+test("header-only candidates do not export a CRC or claim an empty payload was included", async () => {
+  const { buildFinding } = await mod("finding.js");
+  const { rowIndex } = await mod("rows.js");
+  for (const badFlags of [false, true]) {
+    const bytes = new Uint8Array(42);
+    bytes.set([0xfd, 30, badFlags ? 2 : 0, 0, 0, 1, 1, 0xfd, 0xff, 0xff]);
+    const candidates = await core.analyze(bytes, { parser, format: "raw" });
+    const finding = await buildFinding({ result: candidates, bytes, parser, ref: rowIndex(candidates).at(0),
+      fileName: "candidate.raw", includeAllPayloads: true });
+    assert.equal(finding.finding.kind, badFlags ? "bad_flags" : "unsupported_message");
+    assert.equal(finding.finding.frame_length, 10);
+    assert.equal(finding.finding.crc, null);
+    assert.equal(finding.bytes.crc_hex, undefined);
+    assert.equal(finding.bytes.payload_hex, undefined);
+    assert.match(finding.bytes.payload_omitted, /30 payload bytes declared.*only the candidate header.*boundaries are not established/);
   }
 });
 

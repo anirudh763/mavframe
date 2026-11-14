@@ -92,7 +92,7 @@ Selecting a row on the same wide screen keeps focus on the row instead.
 - "signature present; not verified" wherever a signed frame appears.
 - Sequence gaps always carry the one-fully-observed-channel, in-order-arrival assumption.
 - The bundled sample is labelled an engineering fixture, not a real flight, on Capture and Frames.
-- The finding export leaves out payload bytes of any message that may carry position unless the user opts in.
+- The finding export leaves out all payload bytes unless the user opts in. A damaged message id cannot establish that raw bytes are safe to share. Header-only candidates export neither payload nor an inferred CRC because their frame boundaries are not established.
 
 ## States
 

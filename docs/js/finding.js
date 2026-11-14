@@ -1,13 +1,11 @@
 // Portable finding export: one row of a capture as plain JSON that can be
-// attached to a bug report. Raw payload bytes are included by default only
-// for messages that carry no position (HEARTBEAT, SYS_STATUS, ATTITUDE);
-// GPS/position and every other payload is left out unless the user opts in.
+// attached to a bug report. Raw payload bytes require an explicit opt-in:
+// even a familiar message id can be damaged or carry unexpected data.
 import { anatomy, hexN, msgLabel } from "./anatomy.js";
 import { rowIndex, rowInfo } from "./rows.js";
 
 // Must equal MAVFRAME_VERSION_STRING in include/mavframe.h (tests/web/test_finding.mjs checks).
 export const MAVFRAME_VERSION = "0.1.0";
-export const NO_POSITION_MSGIDS = new Set([0, 1, 30]);
 
 const KIND = { valid: "valid_frame", crc: "crc_failure", unsupported: "unsupported_message", reject: "bad_flags" };
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -57,10 +55,12 @@ export async function buildFinding({ result, bytes, parser, ref, fileName, isSam
   const out = { header_hex: hex(bytes.subarray(a.off, Math.min(a.off + 10, a.end))) };
   if (a.crc) out.crc_hex = hex(bytes.subarray(a.crc.at, a.crc.at + 2));
   const payload = bytes.subarray(a.off + 10, Math.min(a.off + 10 + a.plen, a.end));
-  if (includeAllPayloads || NO_POSITION_MSGIDS.has(a.msgid)) {
+  if (info.check === "unsupported" || info.check === "reject") {
+    out.payload_omitted = `${a.plen} payload bytes declared; only the candidate header was retained. Payload boundaries are not established, so raw payload export is unavailable for this row.`;
+  } else if (includeAllPayloads) {
     out.payload_hex = hex(payload);
   } else {
-    out.payload_omitted = `${payload.length} payload bytes left out: ${msgLabel(a.msgid)} may carry GPS/position data. Export again with "Include raw payload bytes" to add them.`;
+    out.payload_omitted = `${payload.length} payload bytes left out; raw payloads may contain GPS/position or other sensitive data. Export again with "Include all payloads" to add them.`;
   }
   return {
     schema: "mavframe-finding/1",

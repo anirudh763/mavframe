@@ -200,6 +200,7 @@ async function run(bytes, name, isSample) {
     });
     progress.value = 100;
     await yieldToBrowser();
+    if (state.abort.signal.aborted) throw new DOMException("parsing cancelled", "AbortError");
     Object.assign(state, { result, bytes, name, isSample, rows: null, rowsKey: "" });
     fillMessageFilter();
     if (result.validFrames === 0) {
@@ -643,7 +644,12 @@ function renderDetail(route) {
       el("div", {}, el("span", { class: "k", text: "Computed CRC" }), el("span", { class: "v", text: computed })),
       el("div", { class: `verdict ${verdict[0]}` }, el("span", { class: "k", text: "Result" }), el("span", { class: "v", text: verdict[1] })));
   } else {
-    cc.replaceChildren(el("div", {}, el("span", { class: "k", text: "CRC" }), el("span", { class: "v", text: "cut off at the end of the capture" })));
+    const why = info.check === "unsupported"
+      ? "Not checked: no CRC_EXTRA; only the candidate header was retained"
+      : info.check === "reject"
+        ? "Not checked: unsupported flags; only the candidate header was retained"
+        : "cut off at the end of the capture";
+    cc.replaceChildren(el("div", {}, el("span", { class: "k", text: "CRC" }), el("span", { class: "v", text: why })));
   }
 
   const notes = [];

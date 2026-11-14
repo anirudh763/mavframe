@@ -354,9 +354,9 @@ test("signed frames: 'signature present; not verified' stays visible in rows and
   await page.close();
 });
 
-test("finding export: JSON with version, file hash and CRCs, and no GPS/position payload by default", async () => {
+test("finding export: JSON with version, file hash and CRCs; all payloads require opt-in", async () => {
   const page = await openPage({ acceptDownloads: true });
-  for (const [off, name, hasPayload] of [[13866, "ATTITUDE", true], [34797, "GLOBAL_POSITION_INT", false]]) {
+  for (const [off, name] of [[13866, "ATTITUDE"], [34797, "GLOBAL_POSITION_INT"]]) {
     const href = await rowHref(page, off);
     await page.goto(base + href);
     await page.waitForSelector("#export-finding");
@@ -369,8 +369,14 @@ test("finding export: JSON with version, file hash and CRCs, and no GPS/position
     assert.equal(f.finding.crc.match, false);
     assert.match(f.file.sha256, /^[0-9a-f]{64}$/);
     assert.equal(f.file.size, truth.bytes);
-    assert.equal("payload_hex" in f.bytes, hasPayload, `${name} payload exported: ${hasPayload}`);
+    assert.equal("payload_hex" in f.bytes, false, `${name} payload requires opt-in`);
     if (off === 13866) assert.deepEqual(f.finding.crc, { wire: "0xA4FE", computed: "0x66D8", match: false });
+    await page.check("#include-payload");
+    const [includedDownload] = await Promise.all([page.waitForEvent("download"), page.click("#export-finding")]);
+    const included = JSON.parse(fs.readFileSync(await includedDownload.path(), "utf8"));
+    const sample = fs.readFileSync(path.join(DOCS, "sample/sample-flight.tlog"));
+    assert.equal(included.bytes.payload_hex, sample.subarray(off + 10, off + 10 + sample[off + 1]).toString("hex"));
+    await page.uncheck("#include-payload");
   }
   assert.match(await page.textContent("#export-status"), /Exported/);
   assert.deepEqual(page.errors, []);

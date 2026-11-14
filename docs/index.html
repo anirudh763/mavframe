@@ -221,7 +221,7 @@
               <button type="button" class="btn" id="prev-row">Previous row</button>
               <button type="button" class="btn" id="next-row">Next row</button>
             </span>
-            <p id="export-help" class="sr-only">Saves this row as JSON: mavframe version, file name, size and SHA-256, offsets, CRC wire vs computed and the parser's assumptions. Payload bytes are left out unless the message carries no position, or you include all payload bytes; they may contain GPS/position data.</p>
+            <p id="export-help" class="sr-only">Saves this row as JSON: mavframe version, file name, size and SHA-256, offsets, CRC wire vs computed and the parser's assumptions. All payload bytes are left out unless you include all payloads; they may contain GPS/position or other sensitive data. Header-only unsupported and bad-flags candidates cannot export a payload or CRC.</p>
             <p id="export-status" class="small export-status" role="status" aria-live="polite"></p>
           </div>
         </div>
@@ -263,7 +263,7 @@
         <h2>The bundled sample</h2>
         <p>The engineering sample (<code>sample/sample-flight.tlog</code>) is synthetic: <code>tools/gen_sample_tlog.py</code> generates it with known CRC failures, sequence gaps and skipped bytes so the tests can check exact counts. It is not a real flight and its numbers say nothing about any vehicle.</p>
         <h2>Finding export</h2>
-        <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. Payload bytes are left out by default unless the message carries no position (HEARTBEAT, SYS_STATUS, ATTITUDE). A checkbox adds them for every message.</p>
+        <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. All payload bytes are left out by default. The checkbox adds them when a full frame was retained; raw bytes may contain GPS/position or other sensitive data. Unsupported and bad-flags candidates retain only a header, so their payload and CRC are unavailable.</p>
         <h2>Privacy and licences</h2>
         <p>Files are read in this browser tab and never uploaded. Message definitions come from the official MAVLink XML (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">licence</a>).</p>
       </section>
