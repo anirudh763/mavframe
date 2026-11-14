@@ -307,7 +307,7 @@ Neither parser reported a frame that was not written to the stream.
 ./build/test_mavframe          # prints "967 checks, 0 failures"
 python3 -m pytest tests -v     # 17 passed (differential, command line, version)
 node --test tests/web/test_wasm.mjs   # 18 passed (WebAssembly build, see Browser inspector)
-node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs   # 47 passed, 1 skipped (screenshots): 5 + 24 + 18 (Chromium, Playwright, axe-core)
+node --test tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs   # 50 passed, 1 skipped (screenshots): 7 + 25 + 18 (Chromium, Playwright, axe-core)
 ```
 
 The C tests cover: CRC known answer (0x6F91 for "123456789"), zero-length and
