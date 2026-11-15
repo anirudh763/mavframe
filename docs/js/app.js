@@ -179,7 +179,7 @@ function render({ keepFocus = false } = {}) {
 function setBusy(busy, cancellable = false) {
   state.busy = busy;
   for (const id of ["load-sample", "file", "format"]) $(id).disabled = busy;
-  for (const control of document.querySelectorAll('[data-capture-export], #mutate-byte, #restore-capture')) control.disabled = busy;
+  for (const control of document.querySelectorAll('[data-capture-export], #export-finding, #mutate-byte, #restore-capture')) control.disabled = busy;
   $("cancel").hidden = !(busy && cancellable);
 }
 
@@ -852,13 +852,16 @@ function stepRow(dir) {
 }
 
 async function exportFinding() {
+  const snapshot = state.result;
+  if (!snapshot || state.busy) return;
   const route = state.route;
-  const ref = rowIndex(state.result).at(route.index);
+  const ref = rowIndex(snapshot).at(route.index);
   if (!ref) return;
   const includeAll = $("include-payload").checked;
-  const f = await buildFinding({ result: state.result, bytes: state.bytes, parser: state.parser, ref, fileName: state.name,
+  const f = await buildFinding({ result: snapshot, bytes: state.bytes, parser: state.parser, ref, fileName: state.name,
     isSample: state.isSample, includeAllPayloads: includeAll });
-  const base = state.name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.[^.]*$/, "") || "capture";
+  if (state.result !== snapshot) throw new Error('The capture changed before export. Export the current finding again.');
+  const base = f.file.name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.[^.]*$/, "") || "capture";
   const file = `mavframe-finding-${base}-offset-${f.finding.offset}.json`;
   const url = URL.createObjectURL(new Blob([JSON.stringify(f, null, 2) + "\n"], { type: "application/json" }));
   const a = el("a", { href: url, download: file, hidden: true });
