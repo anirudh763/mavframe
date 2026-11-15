@@ -56,11 +56,11 @@ async function goFrames(page, query = "") {
   await page.waitForFunction(() => document.querySelector("#frame-table tbody tr") && !document.getElementById("screen-frames").hidden);
 }
 
-test("Load engineering sample shows the generator's exact counts and per-sender rates", async () => {
+test("Load sample shows the generator's exact counts and per-sender rates", async () => {
   const page = await openPage();
   // While the sample downloads, the old result's status must not stay up.
   const hold = await holdSample(page);
-  await page.getByRole("button", { name: "Load engineering sample" }).click();
+  await page.getByRole("button", { name: "Load synthetic sample" }).click();
   await hold.seen; // the request is in flight and held: this is exactly the loading phase
   assert.equal(await statusText(page), "Loading sample-flight.tlog…");
   assert.equal(await page.isDisabled("#load-sample"), true);
@@ -71,7 +71,7 @@ test("Load engineering sample shows the generator's exact counts and per-sender 
   assert.equal(await metric(page, "m-gaps"), String(truth.gaps));
   assert.equal(await metric(page, "m-skipped"), String(truth.skipped_bytes));
   assert.match(await page.textContent("#m-gaps"), new RegExp(`${truth.missing_frames} frames missing`));
-  assert.match(await page.textContent("#source"), /Engineering fixture/);
+  assert.match(await page.textContent("#source"), /Synthetic sample/);
   const rows = await page.$$eval("#msg-table tbody tr", (trs) => trs.map((tr) => [...tr.cells].map((c) => c.textContent)));
   assert.equal(rows.length, Object.keys(truth.messages).length);
   for (const [id, name, count, , crc] of rows) {
@@ -264,14 +264,14 @@ test("error and empty states: empty file, not a MAVLink file, oversized file, ne
     Object.defineProperty(input.files[0], "size", { value: 300 * 1024 * 1024 });
     input.dispatchEvent(new Event("change"));
   });
-  await page.waitForFunction(() => /huge.tlog is 300 MB.*up to 256 MB/.test(document.getElementById("status").textContent));
+  await page.waitForFunction(() => /huge.tlog is 300 MB.*256 MB/.test(document.getElementById("status").textContent));
   assert.deepEqual(page.errors, []);
   await page.close();
 
   const noSample = await openPage({ noWait: true, hash: "#/frames", route: (p) => p.route("**/sample/sample-flight.tlog", (r) => r.abort()) });
   await noSample.waitForFunction(() => /Could not load the sample/.test(document.getElementById("status").textContent));
   await noSample.waitForFunction(() => /No capture is loaded yet/.test(document.getElementById("frames-empty").textContent));
-  assert.equal(await noSample.getByRole("link", { name: "Go to Capture" }).isVisible(), true);
+  assert.equal(await noSample.locator("#frames-empty").getByRole("link", { name: "Capture" }).isVisible(), true);
   await noSample.goto(base + "#/capture");
   assert.ok(await noSample.$eval("#status", (e) => e.classList.contains("error")));
   assert.equal(await noSample.isEnabled("#file"), true, "a local file can still be opened");

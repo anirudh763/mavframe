@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Capture – Mavframe</title>
-<meta name="description" content="Inspect mixed MAVLink v1/v2 telemetry, decode pinned common/ArduPilot messages and export link diagnostics locally with the real C/Wasm parser.">
+<meta name="description" content="Local MAVLink v1/v2 capture analysis, frame decoding and reports.">
 <meta name="theme-color" content="#f6f5f2">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -22,7 +22,6 @@
    <div class="rail-inner">
     <div class="wordmark">
       <a class="brand" href="#/capture">Mavframe</a>
-      <p class="purpose">MAVLink packet bench</p>
     </div>
     <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
     <nav aria-label="Main" class="nav">
@@ -50,16 +49,15 @@
     </div>
 
     <main id="workspace" tabindex="-1">
-      <noscript><p class="noscript" id="noscript">JavaScript is turned off, so the inspector cannot load its parser and the buttons do nothing. Captures are parsed in this tab by WebAssembly started from JavaScript; nothing is uploaded. Turn on JavaScript for this page, or use the command-line tool from the repository: <code>mavframe-dump capture.bin</code>.</p></noscript>
+      <noscript><p class="noscript" id="noscript">Browser analysis needs JavaScript. Nothing is uploaded. Or use <code>mavframe-dump capture.bin</code> from the repository.</p></noscript>
 
       <!-- Capture -->
       <section id="screen-capture" class="screen" aria-labelledby="h-capture">
         <h1 id="h-capture" tabindex="-1">Capture</h1>
-        <p class="lede">Inspect mixed MAVLink v1/v2 captures with the real C/Wasm parser and pinned common/ArduPilot field definitions. Files stay on this device.</p>
         <div class="toolbar" role="group" aria-label="Load a capture">
           <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
           <label for="file" class="btn primary">Open capture file</label>
-          <button type="button" id="load-sample" class="btn">Load engineering sample</button>
+          <button type="button" id="load-sample" class="btn">Load synthetic sample</button>
           <span class="field">
             <label for="format">Format</label>
             <select id="format">
@@ -69,16 +67,17 @@
             </select>
           </span>
         </div>
+        <p class="muted small">Files stay in this tab; nothing is uploaded.</p>
         <div class="status-row">
           <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
           <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
           <span id="progress-text" class="muted" hidden></span>
           <button type="button" class="btn" id="cancel" hidden>Cancel</button>
         </div>
-        <p id="offline-status" class="muted small" role="status">The inspector works locally. Preparing offline assets…</p>
+        <p id="offline-status" class="muted small" role="status">Preparing offline assets…</p>
         <details class="box capture-tool" id="live-panel">
           <summary>Live radio</summary>
-          <p>Read a user-selected USB telemetry radio through the same C/Wasm parser. This tool never writes commands to the radio or uploads telemetry. Arrival timing is measured per browser read, not per device packet.</p>
+          <p class="muted small">Read-only; nothing is uploaded.</p>
           <div class="toolbar">
             <span class="field"><label for="serial-baud">Baud rate</label><select id="serial-baud"><option value="57600">57,600</option><option value="115200" selected>115,200</option><option value="230400">230,400</option><option value="460800">460,800</option><option value="921600">921,600</option></select></span>
             <button type="button" class="btn primary" id="connect-radio">Connect radio</button>
@@ -93,14 +92,12 @@
             <div><dt>Retained bytes</dt><dd id="live-retained">0</dd></div><div><dt>Discarded history bytes</dt><dd id="live-discarded">0</dd></div>
             <div><dt>Arrival rate</dt><dd id="live-rate">n/a</dd></div>
           </dl>
-          <p class="muted small">Only the last 8 MiB can be inspected; counters cover up to 1 GiB or 30 minutes. Earlier bytes are discarded, not saved. A clean disconnect preserves the tail until a new session or page close; a failed parser may make it unavailable. Gaps are estimates and CRC candidates can include resynchronization noise. A contiguous unchecked custom-dialect header advances the sequence estimate without becoming a verified frame. Physical-radio validation is not yet recorded.</p>
           <div class="table-wrap live-table" role="region" aria-label="Recent native parser events" tabindex="0"><table class="dense"><thead><tr><th scope="col">Offset</th><th scope="col">Sender</th><th scope="col">Message</th><th scope="col">Sequence</th><th scope="col">Result</th></tr></thead><tbody id="live-events"></tbody></table></div>
         </details>
         <details class="box capture-tool">
-          <summary>Native parser fuzz batch</summary>
-          <p>Run 1,000 deterministic valid, bit-flipped, truncated, empty and random-noise inputs against the compiled C parser in a separate worker. Your loaded capture is preserved.</p>
+          <summary>Fuzz</summary>
           <div class="toolbar"><button type="button" class="btn" id="run-fuzz">Run 1,000 fuzz iterations</button><button type="button" class="btn" id="cancel-fuzz" disabled>Cancel fuzz batch</button></div>
-          <p id="fuzz-status" role="status" aria-live="polite">Load a capture with a valid frame to start. Seed: 0x5eed1234.</p>
+          <p id="fuzz-status" role="status" aria-live="polite">Valid frame required. Seed: 0x5eed1234.</p>
         </details>
         <div id="capture-result" hidden>
           <p id="source" class="source"></p>
@@ -263,7 +260,6 @@
       <!-- Format help -->
       <section id="screen-help" class="screen prose" aria-labelledby="h-help" hidden>
         <h1 id="h-help" tabindex="-1">Format help</h1>
-        <p class="lede">What the inspector reads, how it decides a frame is good, and what it does not check.</p>
         <h2>What you can open</h2>
         <p>A <strong>.tlog</strong> file (each record is an 8-byte big-endian microsecond timestamp followed by one frame, as written by ground stations) or a <strong>raw byte stream</strong> containing MAVLink v1, v2 or both. Auto-detect picks .tlog from the file name or a plausible initial timestamp. Captures up to 256 MiB are read in this tab; the first 4,000,000 frame details, 100,000 issue details and 100,000 sequence events are retained. Totals cover the whole file. Message/sender grouping is capped at 10,000 combinations and reports disclose truncation.</p>
         <h2>MAVLink v2 frame layout</h2>
@@ -286,6 +282,10 @@
           </table>
         </div>
         <p>V1 layout: start byte, payload length, sequence, system ID, component ID and one-byte message ID, followed by payload and two-byte CRC. V1 has no incompat/compat flags, extension fields or signature trailer. Both CRC calculations run in the native C engine.</p>
+        <h2>Live radio</h2>
+        <p>Reads USB serial bytes through the C/Wasm parser; it sends no commands and uploads nothing. Arrival rate is measured per browser read, not per packet. Inspection retains only the last 8 MiB; counters cover the full session up to 1 GiB or 30 minutes. Earlier bytes are discarded. A clean disconnect keeps the tail until a new session or page close; parser failure can make it unavailable. Sequence gaps are estimates and CRC candidates may include resynchronization noise. Unchecked custom-dialect headers can advance sequence estimates without becoming verified frames. Physical-radio validation is unrecorded.</p>
+        <h2>Fuzz</h2>
+        <p>Runs 1,000 deterministic valid, bit-flipped, truncated, empty and random-noise inputs through the compiled C parser in a worker. The loaded capture remains unchanged. Seed: <code>0x5eed1234</code>.</p>
         <h2>CRC failed, unsupported, bad flags</h2>
         <p><strong>CRC failed</strong>: the header looked valid, but the checksum the parser computed does not match the two CRC bytes in the capture. The frame is discarded and the parser looks for the next start byte inside it, so a valid frame hidden in damaged bytes is still found. Frame details shows the wire and computed values side by side.</p>
         <p><strong>Unsupported</strong>: the message id is outside the pinned common/ArduPilot definitions, so its CRC_EXTRA is unknown and the checksum cannot be checked. It may be a custom dialect or noise. These are never counted as corrupt. Full native candidate counters remain in capture reports; the .tlog presentation separately classifies timestamp artifacts and nested candidates.</p>
@@ -295,29 +295,27 @@
         <h2>Signatures</h2>
         <p>Signed frames carry 13 extra bytes. The inspector shows them as "signature present; not verified": checking a signature needs the link's secret key, and the parser does not do it.</p>
         <h2>The bundled sample</h2>
-        <p>The engineering sample (<code>sample/sample-flight.tlog</code>) is synthetic: <code>tools/gen_sample_tlog.py</code> generates it with known CRC failures, sequence gaps and skipped bytes so the tests can check exact counts. It is not a real flight and its numbers say nothing about any vehicle.</p>
+        <p>The sample (<code>sample/sample-flight.tlog</code>) is synthetic, not a real flight. <code>tools/gen_sample_tlog.py</code> generates known CRC failures, sequence gaps and skipped bytes for exact-count tests; these values say nothing about a vehicle.</p>
         <h2>Finding export</h2>
         <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. All payload bytes are left out by default. The checkbox adds them when a full frame was retained; raw bytes may contain GPS/position or other sensitive data. Unsupported and bad-flags candidates retain only a header, so their payload and CRC are unavailable.</p>
         <h2>Privacy and licences</h2>
         <p>Files are read in this browser tab and never uploaded. Message definitions come from the official MAVLink XML (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">licence</a>).</p>
         <h2>Custom dialects and team support</h2>
-        <p>The C library and inspector remain MIT licensed, including commercial use. Private dialect integration and team support would be separate services; they are not required to use this tool.</p>
-        <button type="button" class="btn" id="open-team-options">Commercial SDK &amp; support</button>
+        <p>The C library and inspector are MIT licensed, including commercial use. Private dialect integration and team support are separate, optional services.</p>
+        <button type="button" class="btn" id="open-team-options">Support options</button>
       </section>
 
       <!-- Not found -->
       <section id="screen-notfound" class="screen" aria-labelledby="h-notfound" hidden>
         <h1 id="h-notfound" tabindex="-1">Not found</h1>
-        <p class="lede">There is no screen at this address.</p>
-        <p><a class="btn" href="#/capture">Go to Capture</a></p>
+        <p><a class="btn" href="#/capture">Capture</a></p>
       </section>
     </main>
   </div>
 </div>
-<dialog id="byte-editor-dialog" class="byte-editor-dialog" aria-labelledby="byte-editor-heading" aria-describedby="byte-editor-help">
+<dialog id="byte-editor-dialog" class="byte-editor-dialog" aria-labelledby="byte-editor-heading">
   <h2 id="byte-editor-heading">Mutate a copy</h2>
   <div class="byte-editor">
-    <p id="byte-editor-help">Select a byte in the inspector or enter its absolute offset. A new copy runs through the C/Wasm parser; the original is retained.</p>
     <div class="toolbar">
       <span class="field"><label for="mutation-offset">Byte offset</label><input id="mutation-offset" type="number" min="0" step="1" value="0"></span>
       <span class="field"><label for="mutation-mask">Bit to flip</label><select id="mutation-mask"><option value="1">Bit 0 (1)</option><option value="2">Bit 1 (2)</option><option value="4">Bit 2 (4)</option><option value="8">Bit 3 (8)</option><option value="16">Bit 4 (16)</option><option value="32">Bit 5 (32)</option><option value="64">Bit 6 (64)</option><option value="128">Bit 7 (128)</option></select></span>
@@ -329,10 +327,10 @@
   </div>
 </dialog>
 <dialog id="team-options-dialog" class="byte-editor-dialog" aria-labelledby="team-options-heading" aria-describedby="team-options-description">
-  <h2 id="team-options-heading">Custom dialect and team services</h2>
-  <p id="team-options-description">The open-source parser and inspector are available under MIT, with no paid commercial licence required.</p>
-  <p><strong>Proposed support: $49–$199 per engagement.</strong> Possible scope includes private XML code generation, CI fixtures and integration support. This is a pricing hypothesis, not an available subscription, certification or hosted private workspace.</p>
-  <p>No payment or email capture is active. You can prepare a public GitHub request to discuss scope; keep private XML, flight captures, credentials and personal contact details out of it.</p>
+  <h2 id="team-options-heading">Support options</h2>
+  <p id="team-options-description">MIT licensed; no paid commercial licence required.</p>
+  <p><strong>Proposed support: $49–$199 per engagement.</strong> Possible scope: private XML code generation, CI fixtures and integration support. Pricing is a hypothesis; no subscription, certification or hosted workspace is available.</p>
+  <p>No payment or email capture. Keep private XML, flight captures, credentials and personal contact details out of public requests.</p>
   <p><a class="btn" id="team-request" href="https://github.com/anirudh763/mavframe/issues/new?title=Custom%20dialect%20support%20request&amp;body=Please%20describe%20the%20integration%20goal%20without%20private%20XML%2C%20flight%20data%20or%20credentials." target="_blank" rel="noopener noreferrer">Prepare public request</a></p>
   <button type="button" class="btn" id="close-team-options">Close support options</button>
 </dialog>

@@ -251,13 +251,11 @@ async function loadSample() {
 async function openFile(file) {
   if (!file) return;
   if (file.size === 0) {
-    setStatus(`${file.name} is empty (0 bytes). Nothing was loaded; choose a .tlog or raw MAVLink v1/v2 capture.`, true);
+    setStatus(`${file.name} is empty (0 bytes). Choose a .tlog or raw MAVLink v1/v2 capture.`, true);
     return;
   }
   if (file.size > MAX_CAPTURE_BYTES) {
-    setStatus(`${file.name} is ${(file.size / 1048576).toFixed(0)} MB. The inspector reads captures up to ` +
-      `${MAX_CAPTURE_BYTES / 1048576} MB in the browser to stay within memory; split the file (for example with split -b 200m) ` +
-      "or use the mavframe-dump command-line tool.", true);
+    setStatus(`${file.name} is ${(file.size / 1048576).toFixed(0)} MB; browser limit is ${MAX_CAPTURE_BYTES / 1048576} MB. Split the file or use mavframe-dump.`, true);
     return;
   }
   if (state.busy) return;
@@ -284,10 +282,10 @@ function renderCapture() {
   s.replaceChildren(el("span", { class: "mono", text: state.name }),
     el("span", { text: `${fmt(state.bytes.length)} bytes, read as ${r.format === "tlog" ? ".tlog" : "raw stream"}` }));
   if (state.isSample) {
-    s.append(el("span", { class: "label warn", text: "Engineering fixture: synthetic capture from tools/gen_sample_tlog.py, not a real flight" }));
+    s.append(el("span", { class: "label warn", text: "Synthetic sample; not a real flight" }));
   }
   if (state.sourceScope) s.append(el('span', { class: 'label warn', text: state.sourceScope }));
-  $("capture-export-status").textContent = r.sourceGroupsTruncated ? "Message/sender detail grouping reached its 10,000-group bound; global totals still cover every parsed frame." : "Exports omit raw payloads. Sequence gaps are estimates, not measured radio loss.";
+  $("capture-export-status").textContent = r.sourceGroupsTruncated ? "Detail grouping capped at 10,000 groups; global totals include all frames." : "Capture reports omit payloads; sequence gaps are estimates.";
   const set = (id, main, sub, cls) => {
     const dd = $(id);
     dd.className = cls || "";
@@ -359,7 +357,7 @@ function framesEmpty(box) {
     box.replaceChildren(el("p", { text: "Parsing the capture…" }));
   } else {
     box.replaceChildren(el("p", { text: "No capture is loaded yet." }),
-      el("p", {}, el("a", { class: "btn", href: "#/capture", text: "Go to Capture" }), " to open a file or load the engineering sample."));
+      el("p", {}, el("a", { class: "btn", href: "#/capture", text: "Capture" })));
   }
 }
 
@@ -376,7 +374,7 @@ function renderFrames(route) {
   const wide = WIDE.matches;
   const c = (n, label) => el("span", {}, el("strong", { text: fmt(n) }), ` ${label}`);
   $("frames-counts").replaceChildren(el("span", { class: "mono", text: state.name }),
-    ...(state.isSample ? [el("span", { class: "label warn", text: "Engineering fixture, not a real flight" })] : []),
+    ...(state.isSample ? [el("span", { class: "label warn", text: "Synthetic sample; not a real flight" })] : []),
     c(r.validFrames, "valid frames"), c(r.crcErrors, "CRC failures"), c(r.unsupported, "unsupported"),
     c(r.gaps, "sequence gaps"), c(r.skippedBytes, "skipped bytes"));
   for (const b of document.querySelectorAll(".chip")) b.setAttribute("aria-pressed", String(b.dataset.check === p.check));
@@ -618,7 +616,7 @@ function renderDetail(route) {
     $("h-details").textContent = "Frame details";
     empty.replaceChildren(route.screen === "details"
       ? el("p", {}, `There is no row ${fmt(route.index)} in ${state.name} (it has ${fmt(idx.length)} rows). `, el("a", { href: buildHash("frames", route.params), text: "Back to Frames" }))
-      : el("p", { class: "muted", text: "Select a row to see its header, payload fields, CRC and bytes here. Selecting a field highlights its bytes; clicking a byte selects its field." }));
+      : el("p", { class: "muted", text: "No frame selected." }));
     return;
   }
   empty.hidden = true;
@@ -903,7 +901,7 @@ async function mutateByte() {
   if (state.busy || state.bytes !== selected) throw new Error('A different capture operation started. Try the mutation again.');
   if (!await run(bytes, `${original.name} (modified copy)`, original.isSample)) return;
   state.original = original;
-  $('mutation-status').textContent = `Flipped bit ${mask} at byte ${fmt(off)} in a copy; the C/Wasm parser checked the changed bytes. Original retained. Open Capture for totals or select the changed frame.`;
+  $('mutation-status').textContent = `Flipped bit ${mask} at byte ${fmt(off)}. Original retained.`;
 }
 
 // ---------- menu sheet and theme ----------

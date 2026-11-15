@@ -76,7 +76,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
   }
   async function inspectRetained() {
     if (!retained?.bytes.length) {
-      status('No bytes retained. Connect a radio and receive telemetry before inspecting.');
+      status('No bytes retained. Connect and receive data first.');
       return;
     }
     await inspectCapture(retained.bytes, `Retained tail: ${fmt(retained.bytes.length)} of ${fmt(retained.summary.bytes)} serial bytes; ${fmt(retained.discarded)} earlier bytes discarded. Fragment boundaries and timestamps are unavailable.`);
@@ -101,7 +101,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
         try { await current.port.close(); } catch (error) { current.problem ||= `Could not close the port: ${error.message}`; }
         session = null;
       }
-      status((current.problem ? `Disconnected: ${current.problem}` : 'Radio disconnected. Reader, port and parser worker released.') + (retained?.bytes.length ? ' Retained bytes remain available to inspect until a new session or page close.' : ' No recoverable byte snapshot is available.'));
+      status((current.problem ? `Disconnected: ${current.problem}` : 'Radio disconnected.') + (retained?.bytes.length ? ' Retained bytes are available until a new session or page close.' : ' No bytes retained.'));
       if (inspect) await inspectRetained();
     })();
     controls();
@@ -125,7 +125,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
       current.deadline = setTimeout(() => { current.problem = '30-minute session limit reached. Reconnect for another capture.'; stop().catch(error => status(error.message)); }, 30 * 60 * 1000);
       current.reading = read(current);
       current.reading.then(() => { if (session === current && !current.stopping) stop().catch(error => status(error.message)); });
-      status('Connected. Reading actual serial bytes through the persistent C/Wasm parser. No telemetry is uploaded.');
+      status('Connected. Reading serial bytes with C/Wasm; nothing is uploaded.');
     } catch (error) {
       rpc?.close();
       try { await port?.close(); } catch { /* A failed open need not leave an open port. */ }
@@ -135,7 +135,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
   $('disconnect-radio').addEventListener('click', () => stop().catch(error => status(error.message)));
   $('inspect-live').addEventListener('click', () => stop(true).catch(error => status(error.message)));
   navigator.serial?.addEventListener('disconnect', event => { if (session && (event.target === session.port || event.port === session.port)) stop().catch(error => status(error.message)); });
-  status(supported ? `Choose a USB telemetry radio to start. Only the last ${LIVE_RETAIN_BYTES / 1048576} MiB is retained; counters cover the entire session (1 GiB / 30-minute maximum).` : 'Web Serial requires a secure context and a supported desktop browser, such as Chrome or Edge. Use Open capture file in other browsers.');
+  status(supported ? 'Choose a USB telemetry radio.' : 'Web Serial needs a secure context and supported desktop browser. Use Open capture file.');
   controls();
 
   $('run-fuzz').addEventListener('click', async () => {
@@ -146,7 +146,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
     fuzz = current; $('run-fuzz').disabled = true; $('cancel-fuzz').disabled = false;
     try {
       const result = await current.request('fuzz', { frame: frame.buffer }, [frame.buffer]);
-      $('fuzz-status').textContent = `${result.calls} actual C/Wasm calls in ${result.elapsed_ms.toFixed(1)} ms; ${result.frames} valid frames, ${result.bad_crc} CRC candidates rejected, ${result.unknown_msgid} unknown IDs, ${result.bad_flags} unsupported flags. Seed ${result.seed}. No Wasm trap observed in this finite batch; this is not a security certification.`;
+      $('fuzz-status').textContent = `${result.calls} actual C/Wasm calls in ${result.elapsed_ms.toFixed(1)} ms; ${result.frames} valid, ${result.bad_crc} CRC candidates rejected, ${result.unknown_msgid} unknown IDs, ${result.bad_flags} unsupported flags. Seed ${result.seed}. No trap observed in this finite batch; not a security certification.`;
     } catch (error) { $('fuzz-status').textContent = error.name === 'AbortError' ? 'Fuzz batch cancelled; worker terminated.' : `Fuzz batch failed: ${error.message}`; }
     finally { current.close(); fuzz = null; $('run-fuzz').disabled = false; $('cancel-fuzz').disabled = true; }
   });
@@ -160,7 +160,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
       current.stopping = true; clearTimeout(current.deadline); current.rpc.close();
       current.reader.cancel().catch(() => {});
       current.reading.finally(() => current.port.close()).catch(() => {});
-      status('Radio disconnected when leaving the page. Reconnect to start another session.');
+      status('Radio disconnected when leaving this page.');
     }
   });
 }
