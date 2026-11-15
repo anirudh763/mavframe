@@ -91,7 +91,7 @@ test('byte mutation rechecks an actual copy, reports a new CRC failure, and rest
 
 test('seeded fuzz calls use a real Wasm worker, preserve capture, and can be cancelled', async () => {
   const page = await open();
-  await page.getByText('Native parser fuzz batch', { exact: true }).click();
+  await page.locator('#screen-capture').getByText('Fuzz', { exact: true }).click();
   await page.getByRole('button', { name: 'Run 1,000 fuzz iterations', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#fuzz-status').textContent.startsWith('1000 actual C/Wasm calls'));
   assert.match(await page.locator('#m-frames').textContent(), /^1,497/);
@@ -145,7 +145,7 @@ test('expanded capture tools reflow and pass axe at 320, 768 and 1440 in both th
   for (const width of [320, 768, 1440]) {
     const page = await open({ viewport: { width, height: 1000 } });
     await page.locator('#live-panel > summary').click();
-    await page.getByText('Native parser fuzz batch', { exact: true }).click();
+    await page.locator('#screen-capture').getByText('Fuzz', { exact: true }).click();
     for (const theme of ['light', 'dark']) {
       if (theme === 'dark') {
         const hidden = !await page.locator('#theme-toggle').isVisible();
@@ -184,10 +184,10 @@ test('cached inspector reloads offline and still runs the native mutation', asyn
 test('support options keep MIT rights clear and the native dialog traps and returns focus', async () => {
   for (const width of [320, 768, 1440]) {
     const page = await open({ hash: '#/help', viewport: { width, height: 1000 } });
-    await page.getByRole('button', { name: 'Commercial SDK & support', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Custom dialect and team services' });
+    await page.getByRole('button', { name: 'Support options', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Support options' });
     assert.match(await dialog.textContent(), /no paid commercial licence required/);
-    assert.match(await dialog.textContent(), /No payment or email capture is active/);
+    assert.match(await dialog.textContent(), /No payment or email capture/);
     const url = new URL(await page.locator('#team-request').getAttribute('href'));
     assert.equal(url.origin, 'https://github.com');
     assert.equal(url.pathname, '/anirudh763/mavframe/issues/new');

@@ -46,7 +46,7 @@ test("default screen is Capture with a sample load and the fixture labelled as a
   const page = await openPage();
   assert.equal(await h1Text(page), "Capture");
   assert.equal(await page.title(), "Capture – Mavframe");
-  assert.match(await page.textContent("#source"), /Engineering fixture/);
+  assert.match(await page.textContent("#source"), /Synthetic sample/);
   assert.match(await page.textContent("#source"), /not a real flight/);
   assert.equal(await page.locator('nav[aria-label="Main"] a[aria-current="page"]').textContent(), "Capture");
   assert.equal(await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', "content"), CSP, "CSP unchanged");
@@ -450,7 +450,7 @@ test("gate 3: every route change moves focus to the H1 and sets the title", asyn
   await page.goto(base + "#/no-such-screen");
   await page.waitForFunction(() => document.title === "Not found – Mavframe");
   assert.equal(await focusedH1(page), "Not found");
-  await page.getByRole("link", { name: "Go to Capture" }).click();
+  await page.locator("#screen-notfound").getByRole("link", { name: "Capture" }).click();
   await page.waitForFunction(() => document.title === "Capture – Mavframe");
   await page.close();
 });
