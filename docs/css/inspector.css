@@ -247,6 +247,7 @@ body.analyzer-mode #panel-bytes .hex { margin: 4px 0 0; border: 0; padding: 4px 
 body.analyzer-mode #hex-help { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 body.analyzer-mode .tree h3 { margin: 6px 0 4px; }
 body.analyzer-mode .export { margin-top: 4px; padding-top: 4px; }
+body.analyzer-mode .export .check { flex: 1 1 200px; }
 body.analyzer-mode .note { margin: 8px 0; }
 body.analyzer-mode .step { display: none; }
 body.analyzer-mode .tree table.dense td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }
