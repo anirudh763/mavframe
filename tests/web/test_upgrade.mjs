@@ -129,6 +129,7 @@ test('cached inspector reloads offline and still runs the native mutation', asyn
   const page = await open({ serviceWorkers: 'allow' });
   await page.waitForFunction(() => document.querySelector('#offline-status').textContent.startsWith('Offline inspector ready'));
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  await page.goto(base + '#/capture');
   await page.context().setOffline(true);
   await page.reload(); await waitParsed(page, 'sample-flight.tlog');
   await page.goto(base + '#/frames/0?tab=bytes');
