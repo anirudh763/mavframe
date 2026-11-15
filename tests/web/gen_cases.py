@@ -20,13 +20,14 @@
   critic-9001.tlog/.json  the reviewer's independent corrupted .tlog
                  (tests/web/gen_critic_tlog.py, seed 9001)
   ardupilot.tlog/.json  clean ArduPilot-style capture: 100 HEARTBEAT and
-                 100 MEMINFO (id 152, ardupilotmega dialect, not in common)
+                 100 MEMINFO (id 152, ardupilotmega dialect)
                  alternating from one sender, brkval 0x05FD so the payload
-                 holds a 0xFD byte. Expected: 100 frames, 100 unsupported,
+                 holds a 0xFD byte. Expected: 200 valid frames, 0 unsupported,
                  0 rejects, 0 sequence gaps.
   seq-*.bin      HEARTBEATs from one component with chosen sequence numbers
                  (see SEQ_CASES) for the sequence classification tests
 """
+import json
 import os
 import random
 import struct
@@ -109,7 +110,7 @@ def main():
 
     # .tlog with corrupted frames and 0xFD bytes inside timestamps.
     lk = link(False, 1, 1)
-    recs, crc = bytearray(), 0
+    recs, crc, crc_offsets, timestamp_fe_offsets = bytearray(), 0, [], []
     for i in range(2000):
         if i % 2:
             msg = mav.MAVLink_attitude_message(i, 0.1, 0.2, 0.3, 0.01, 0.02, 0.03)
@@ -119,6 +120,7 @@ def main():
         if i % 10 == 3:
             fr[12] ^= 0x40
             crc += 1
+            crc_offsets.append(len(recs) + 8)
         ts = bytearray(struct.pack(">Q", 1767225600000000 + i * 20000))
         if i % 4 == 0:
             ts[6] = 0xFD                 # fake header whose flags byte is the real 0xFD: bad flags
@@ -126,11 +128,14 @@ def main():
             ts[5], ts[7] = 0xFD, 0x00    # fake header with msgid = seq | sys<<8 | comp<<16: unknown id
         elif i % 4 == 2:
             ts[7] = 0xFD                 # fake header whose length byte is the real 0xFD
+        timestamp_fe_offsets.extend(len(recs) + j for j, value in enumerate(ts) if value == 0xFE)
         recs += ts + fr
     with open(os.path.join(out, "corrupt-ts.tlog"), "wb") as f:
         f.write(recs)
     with open(os.path.join(out, "corrupt-ts.json"), "w", encoding="utf-8") as f:
-        f.write('{"records": 2000, "crc_errors": %d, "frames": %d}\n' % (crc, 2000 - crc))
+        json.dump({"records": 2000, "crc_errors": crc, "frames": 2000 - crc,
+                   "corrupt_offsets": crc_offsets, "timestamp_fe_offsets": timestamp_fe_offsets}, f)
+        f.write("\n")
 
     # Clean capture with messages from another dialect (ardupilotmega).
     from pymavlink.dialects.v20 import ardupilotmega as apm
@@ -147,7 +152,7 @@ def main():
     with open(os.path.join(out, "ardupilot.tlog"), "wb") as f:
         f.write(rec)
     with open(os.path.join(out, "ardupilot.json"), "w", encoding="utf-8") as f:
-        f.write('{"frames": 100, "unsupported": 100, "rejects": 0, "gaps": 0, "crc_errors": 0}\n')
+        f.write('{"frames": 200, "unsupported": 0, "rejects": 0, "gaps": 0, "crc_errors": 0}\n')
 
     gen_critic_tlog.main(os.path.join(out, "critic-9001.tlog"))
 

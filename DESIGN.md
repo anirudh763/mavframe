@@ -1,7 +1,7 @@
 ---
-version: 3
+version: 4
 name: Mavframe packet bench
-supersedes: "version 2 shared 216px rail; independent composition selected 2026-11-13"
+supersedes: "version 3 packet bench; protocol and local-tools upgrade 2026-11-14"
 files: { base: docs/css/ui.css, app: docs/css/inspector.css, theme-before-paint: docs/js/theme.js }
 dial: ENERGY 2 / RHYTHM 2 / MOTION 1
 theme: { default: light, dark: "explicit, remembered 'Dark theme' toggle; never inferred from OS preference" }
@@ -85,8 +85,9 @@ The AI-assistance disclosure stays visible in Format help.
 
 JSON exports omit all raw payloads unless the user explicitly opts in, including familiar message IDs and damaged headers.
 Header-only unsupported/bad-flags candidates export neither payload nor an inferred CRC. A visual change must not change
-this boundary or the cancellation race fix. The C source, headers, Wasm, analysis core, generated definitions and sample
-capture remain byte-identical.
+this boundary or the cancellation race fix. For a visual-only change the C source, headers, Wasm, analysis core, generated definitions
+and sample capture remain byte-identical. The version 4 protocol upgrade deliberately changes the
+parser and definitions; the synthetic sample bytes remain identical and its v1 frame is now accepted.
 
 ## Verification
 
@@ -94,3 +95,16 @@ Existing `test_finding.mjs`, `test_routes.mjs` and `test_ui.mjs` cover row and e
 linked selection, 44px targets (including deliberate shrink sabotage), theme persistence, both-theme contrast and axe.
 Only the obsolete 216px rail and blue-palette assertions change for version 3. Desktop, 768px and 320px screenshots,
 including grayscale silhouettes, are inspected in `Downloads/active/mavframe-packet-bench-evidence`.
+
+## Local tools in version 4
+
+Capture keeps live radio and finite fuzz controls in named, initially collapsed sections.
+Live counters distinguish the full bounded session from the retained byte tail. Reports
+download actual capture-wide counters without raw payloads. The byte mutation dialog
+keeps the eight header targets and byte rows available in the desktop analyzer; its native
+modal traps focus and returns it to the opener or current route heading. Support options
+state MIT rights and proposed services without pretending there is checkout or email capture.
+
+Navigation uses three pinned Lucide glyphs (capture file, scan frames, reference book)
+to distinguish actual destinations; adjacent labels supply their accessible names.
+There are no decorative numbered navigation prefixes. Theme text names the next action.

@@ -16,8 +16,8 @@ Defects, all at fixed places so the counts below are exact:
   * 3 frames have one byte changed after packing (CRC errors);
   * 1 GPS_RAW_INT frame is packed (its sequence number is used) but never
     written, so the autopilot's sequence numbers jump (a gap);
-  * 1 record holds a MAVLink v1 HEARTBEAT from a second system; the parser
-    handles v2 only, so its bytes count as skipped.
+  * 1 record holds a MAVLink v1 HEARTBEAT from a second system, exercising
+    mixed-version parsing without changing the original capture bytes.
 
 The truth file is computed from this generator's own record list, not by
 running mavframe, and is then cross-checked with pymavlink's .tlog reader.
@@ -144,7 +144,8 @@ def main():
                 mav1.MAV_TYPE_ONBOARD_CONTROLLER, mav1.MAV_AUTOPILOT_INVALID, 0, 0, mav1.MAV_STATE_ACTIVE, 3
             ), companion))
             ts = START_US + int(V1_AT_S * 1e6)
-            records.append({"kind": "v1", "ts": ts, "offset": len(out) + 8, "len": len(frame)})
+            records.append({"kind": "v1", "ts": ts, "offset": len(out) + 8, "len": len(frame),
+                            "msgid": 0, "name": "HEARTBEAT", "sysid": frame[3], "compid": frame[4], "seq": frame[2]})
             out += struct.pack(">Q", ts) + frame
         ts = START_US + int(round(t * 1e6)) + rng.randint(0, 900)
         if name == "GCS_HEARTBEAT":
@@ -172,12 +173,12 @@ def main():
     with open(TLOG, "wb") as f:
         f.write(out)
 
-    ok = [r for r in records if r["kind"] == "ok"]
+    ok = [r for r in records if r["kind"] in ("ok", "v1")]
     per_msg = {}
     for r in records:
-        if r["kind"] in ("ok", "crc"):
+        if r["kind"] in ("ok", "v1", "crc"):
             e = per_msg.setdefault(str(r["msgid"]), {"name": r["name"], "count": 0, "crc_errors": 0})
-            e["count" if r["kind"] == "ok" else "crc_errors"] += 1
+            e["count" if r["kind"] in ("ok", "v1") else "crc_errors"] += 1
     # Sequence findings per (system, component), same rule as the inspector:
     # step 1 in order, 0 duplicate, 2..128 gap (step-1 missing if in order),
     # 129..255 backwards (late frame if <= 16 back, otherwise a reset).
@@ -203,17 +204,19 @@ def main():
 
     # Cross-check with pymavlink's own .tlog reader (robust parsing).
     log = mavutil.mavlink_connection(TLOG, dialect="common", robust_parsing=True)
-    py_frames, py_bad = 0, 0
+    py_frames, py_v1, py_bad = 0, 0, 0
     while True:
         m = log.recv_msg()
         if m is None:
             break
         if m.get_type() == "BAD_DATA":
             py_bad += 1
-        elif m.get_type() != "HEARTBEAT" or m.get_srcSystem() != 2:  # the v1 record
+        else:
             py_frames += 1
+            if m.get_msgbuf()[0] == 0xFE:
+                py_v1 += 1
     if py_frames != len(ok):
-        sys.exit("pymavlink read %d valid v2 frames, generator wrote %d" % (py_frames, len(ok)))
+        sys.exit("pymavlink read %d valid frames, generator wrote %d" % (py_frames, len(ok)))
 
     truth = {
         "file": "docs/sample/sample-flight.tlog",
@@ -231,7 +234,7 @@ def main():
         "first_ts_us": ok[0]["ts"],
         "last_ts_us": ok[-1]["ts"],
         "messages": per_msg,
-        "pymavlink_tlog_reader": {"valid_v2_frames": py_frames, "bad_data_pieces": py_bad},
+        "pymavlink_tlog_reader": {"valid_frames": py_frames, "valid_v1_frames": py_v1, "valid_v2_frames": py_frames - py_v1, "bad_data_pieces": py_bad},
         "crc_error_offsets": [r["offset"] for r in records if r["kind"] == "crc"],
         "decoded": [{"offset": r["offset"], "msgid": r["msgid"], "name": r["name"], "fields": r["fields"]}
                     for r in ok if "fields" in r],

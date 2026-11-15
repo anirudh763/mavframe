@@ -14,7 +14,7 @@ let base;
 let browser;
 before(async () => {
   ({ server, base } = await startServer());
-  browser = await chromium.launch();
+  browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 });
 after(async () => {
   await browser?.close();
@@ -541,15 +541,17 @@ test("gate 6: light is the default even when the OS prefers dark; dark is an exp
   const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   assert.equal(await bg(), "rgb(246, 245, 242)", "porcelain canvas #f6f5f2 under OS dark");
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector(".command-header")).backgroundColor), "rgb(255, 255, 255)");
-  const toggle = page.getByRole("button", { name: "Dark theme" });
+  const toggle = page.locator('#theme-toggle');
   assert.equal(await toggle.getAttribute("aria-pressed"), "false");
   await toggle.click();
+  assert.equal(await toggle.textContent(), 'Light theme');
   assert.equal(await toggle.getAttribute("aria-pressed"), "true");
   assert.notEqual(await bg(), "rgb(246, 245, 242)");
   await page.reload();
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await page.getAttribute("html", "data-theme"), "dark", "choice remembered");
-  await page.getByRole("button", { name: "Dark theme" }).click();
+  await page.getByRole("button", { name: "Light theme" }).click();
+  assert.equal(await toggle.textContent(), 'Dark theme');
   assert.equal(await bg(), "rgb(246, 245, 242)");
   // Blocked storage: still light, no errors.
   const blocked = await openPage({ colorScheme: "dark", route: (p) => p.addInitScript(() => {

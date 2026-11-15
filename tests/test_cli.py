@@ -61,6 +61,17 @@ def test_file_mode_ignores_stdin(tmp_path):
     assert run([str(path)], b"\xfd" * 50).stdout == run([str(path)]).stdout
 
 
+def test_v1_frame_output_identifies_protocol_version():
+    v1 = bytes.fromhex("fe 09 07 01 01 00 04 00 00 00 00 02 03 03 03 11 7e")
+    p = run([], v1)
+    assert p.returncode == 0
+    assert p.stdout.decode() == (
+        "off=0 version=1 msgid=0 sysid=1 compid=1 seq=7 len=9 signed=0 "
+        "payload=040000000002030303\n"
+    )
+    assert p.stderr.decode().startswith("bytes=17 frames=1 bad_crc=0 ")
+
+
 def test_missing_file_is_a_clear_error(tmp_path):
     missing = tmp_path / "no-such.tlog"
     p = run([str(missing)])

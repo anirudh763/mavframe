@@ -5,7 +5,8 @@
  * JavaScript copies a chunk of the capture into input_buf, calls
  * mfw_feed(start, len) and reads back the events written to event_buf. Each
  * call stops when the input range is used up or the event buffer is full, so
- * JS loops until every byte of the chunk is consumed. Events are 16 bytes:
+ * JS loops until every byte of the chunk is consumed. Events are 16 bytes for
+ * both versions:
  *
  *   0  u32 stream offset of the frame / candidate start byte
  *   4  u32 message id (from the header, also for rejected candidates)
@@ -48,7 +49,6 @@ static uint8_t scratch_buf[MAVFRAME_MAX_FRAME];
 
 static void record(mavframe_status st)
 {
-    const uint8_t *b;
     mfw_event *e;
 
     if (st == MAVFRAME_NEED_MORE || st == MAVFRAME_DROPPED || event_count >= EVENT_CAP)
@@ -56,18 +56,18 @@ static void record(mavframe_status st)
     /* For FRAME and the three failures the candidate still sits at
      * buf[head] with at least a full header buffered: fail() releases it
      * lazily, on the next call. */
-    b = mavframe_raw(&parser);
     e = &event_buf[event_count++];
     e->off = parser.stats.bytes - mavframe_pending(&parser);
-    e->msgid = (uint32_t)b[7] | ((uint32_t)b[8] << 8) | ((uint32_t)b[9] << 16);
+    e->msgid = mavframe_msgid(&parser);
     e->status = (uint8_t)st;
-    e->seq = b[4];
-    e->sysid = b[5];
-    e->compid = b[6];
-    e->len = b[1];
-    e->iflags = b[2];
-    e->frame_len = (st == MAVFRAME_FRAME || st == MAVFRAME_BAD_CRC) ? mavframe_frame_len(&parser)
-                                                                    : MAVFRAME_HEADER_LEN;
+    e->seq = mavframe_seq(&parser);
+    e->sysid = mavframe_sysid(&parser);
+    e->compid = mavframe_compid(&parser);
+    e->len = mavframe_payload_len(&parser);
+    e->iflags = mavframe_incompat_flags(&parser);
+    e->frame_len = (st == MAVFRAME_FRAME || st == MAVFRAME_BAD_CRC)
+                       ? mavframe_frame_len(&parser)
+                       : mavframe_header_len(&parser);
 }
 
 void mfw_reset(void)

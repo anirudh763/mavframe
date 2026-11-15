@@ -2,8 +2,21 @@
 
 ## Unreleased
 
-Browser inspector rebuild (UI only: `src/`, `include/`, `web/wasm/` and
-`docs/mavframe.wasm` are byte-identical to 0.1.0).
+Mixed-version parser and browser workbench upgrade. The native parser, CRC
+definitions and Wasm deliberately change from 0.1.0; the public API remains
+source-compatible and gains protocol-version/header-length accessors.
+
+- Parse MAVLink v1 and v2 together through the same bounded C state machine.
+- Generate 326 message and 221 enum definitions from a checksum-pinned official
+  common/ArduPilot include graph, cross-checked with matching generated pymavlink.
+- Capture-wide JSON/CSV/Markdown reports, local byte-copy mutation, a seeded
+  1,000-call C/Wasm fuzz worker and bounded read-only Web Serial capture.
+- Local offline application cache, dynamic theme action labels, native accessible
+  dialogs and explicit MIT commercial-use/support wording.
+- The unchanged synthetic sample now counts its existing v1 heartbeat: 1,497
+  valid frames and 135 skipped bytes. Physical radio validation remains open.
+
+Earlier browser inspector rebuild:
 
 - Light by default, also when the OS prefers dark; dark only through the
   "Dark theme" toggle. New tokens and layout in `DESIGN.md`.

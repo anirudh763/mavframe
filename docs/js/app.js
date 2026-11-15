@@ -6,6 +6,9 @@ import { loadParser, analyze, MAX_CAPTURE_BYTES } from "./core.js";
 import { rowIndex, rowInfo, filterRows, issuePositions, CANDIDATE_KINDS } from "./rows.js";
 import { anatomy, hexN, msgLabel } from "./anatomy.js";
 import { buildFinding } from "./finding.js";
+import { buildCaptureReport, reportCsv, reportMarkdown } from "./capture-report.js";
+import { wireSerial } from "./serial.js";
+import { NAV_ICONS } from "./nav-icons.js";
 
 const SAMPLE = { url: "sample/sample-flight.tlog", name: "sample-flight.tlog" };
 const PAGE = 100;
@@ -19,6 +22,7 @@ const fmt = (n) => n.toLocaleString("en-US");
 
 const state = {
   parser: null, result: null, bytes: null, name: "", isSample: false, busy: false, abort: null,
+  original: null, sourceScope: null,
   rowsKey: "", rows: null, lastScreen: null, lastHash: null, prevRoute: null, route: null, keepFocusNext: false,
 };
 
@@ -56,7 +60,7 @@ function yieldToBrowser() {
   return new Promise((resolve) => { waiting.push(resolve); channel.port2.postMessage(0); });
 }
 
-const timeMode = () => state.result && !Number.isNaN(state.result.firstTs) && state.result.endTs > state.result.firstTs;
+const timeMode = () => state.result && !state.result.timestampReversals && !Number.isNaN(state.result.firstTs) && state.result.endTs > state.result.firstTs;
 function relTime(ts) {
   const r = state.result;
   if (!r || Number.isNaN(ts) || Number.isNaN(r.firstTs)) return "";
@@ -175,6 +179,7 @@ function render({ keepFocus = false } = {}) {
 function setBusy(busy, cancellable = false) {
   state.busy = busy;
   for (const id of ["load-sample", "file", "format"]) $(id).disabled = busy;
+  for (const control of document.querySelectorAll('[data-capture-export], #mutate-byte, #restore-capture')) control.disabled = busy;
   $("cancel").hidden = !(busy && cancellable);
 }
 
@@ -204,15 +209,16 @@ async function run(bytes, name, isSample) {
     Object.assign(state, { result, bytes, name, isSample, rows: null, rowsKey: "" });
     fillMessageFilter();
     if (result.validFrames === 0) {
-      setStatus(`No MAVLink v2 frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
-        (result.unsupported ? `, ${fmt(result.unsupported)} candidates with message ids outside the common dialect` : "") +
-        ". Open a .tlog or raw MAVLink v2 capture (v1-only streams are not supported).", true);
+      setStatus(`No supported MAVLink frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
+        (result.unsupported ? `, ${fmt(result.unsupported)} candidates with message ids outside the pinned dialects` : "") +
+        ". Open a .tlog or raw MAVLink v1/v2 capture.", true);
     } else {
       setStatus(`${name}: ${fmt(result.validFrames)} valid frames, ${fmt(result.crcErrors)} CRC failures, ` +
         `${fmt(result.unsupported)} unsupported, ${fmt(result.gaps)} sequence gaps (~${fmt(result.missingFrames)} frames missing if in order), ` +
         `${fmt(result.skippedBytes)} skipped bytes.`);
     }
     render({ keepFocus: true });
+    return true;
   } catch (err) {
     if (err.name === "AbortError") setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ""));
     else setStatus(`Could not parse ${name}: ${err.message}`, true);
@@ -239,13 +245,13 @@ async function loadSample() {
   } finally {
     setBusy(false);
   }
-  await run(bytes, SAMPLE.name, true);
+  if (await run(bytes, SAMPLE.name, true)) { state.original = { bytes, name: SAMPLE.name, isSample: true }; state.sourceScope = null; }
 }
 
 async function openFile(file) {
   if (!file) return;
   if (file.size === 0) {
-    setStatus(`${file.name} is empty (0 bytes). Nothing was loaded; choose a .tlog or raw MAVLink v2 capture.`, true);
+    setStatus(`${file.name} is empty (0 bytes). Nothing was loaded; choose a .tlog or raw MAVLink v1/v2 capture.`, true);
     return;
   }
   if (file.size > MAX_CAPTURE_BYTES) {
@@ -266,7 +272,7 @@ async function openFile(file) {
   } finally {
     setBusy(false);
   }
-  await run(bytes, file.name, false);
+  if (await run(bytes, file.name, false)) { state.original = { bytes, name: file.name, isSample: false }; state.sourceScope = null; }
 }
 
 // ---------- Capture ----------
@@ -280,6 +286,8 @@ function renderCapture() {
   if (state.isSample) {
     s.append(el("span", { class: "label warn", text: "Engineering fixture: synthetic capture from tools/gen_sample_tlog.py, not a real flight" }));
   }
+  if (state.sourceScope) s.append(el('span', { class: 'label warn', text: state.sourceScope }));
+  $("capture-export-status").textContent = r.sourceGroupsTruncated ? "Message/sender detail grouping reached its 10,000-group bound; global totals still cover every parsed frame." : "Exports omit raw payloads. Sequence gaps are estimates, not measured radio loss.";
   const set = (id, main, sub, cls) => {
     const dd = $(id);
     dd.className = cls || "";
@@ -300,7 +308,7 @@ function renderCapture() {
 
 function renderMessages() {
   const r = state.result;
-  const hz = (v) => (Number.isNaN(v) ? "n/a" : v.toFixed(2));
+  const hz = (v) => (Number.isNaN(v) || r.timestampReversals ? "n/a" : v.toFixed(2));
   const rows = r.messages.map((m) => {
     const many = m.sources.length > 1;
     return el("tr", {},
@@ -312,7 +320,7 @@ function renderMessages() {
       el("td", { class: "sources" }, ...m.sources.map((x) => el("span", { class: "src",
         text: many ? `${x.sysid}:${x.compid} at ${hz(x.rateHz)} Hz` : `${x.sysid}:${x.compid}` }))));
   });
-  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: 6, class: "muted", text: "No valid MAVLink v2 frames in this capture." })));
+  if (!rows.length) rows.push(el("tr", {}, el("td", { colspan: 6, class: "muted", text: "No valid MAVLink frames in this capture." })));
   $("msg-table").querySelector("tbody").replaceChildren(...rows);
 }
 
@@ -664,7 +672,7 @@ function renderDetail(route) {
     notes.push(el("p", { class: "note warn" }, el("strong", { text: `${SEQ_TEXT[s.kind]}. ` }), text));
   }
   if (info.check === "crc") notes.push(el("p", { class: "note bad", text: "The header looked valid but the checksum over header and payload does not match, so the frame was discarded. The parser then looked for the next 0xFD inside these bytes, so a valid frame hidden in them is still found." }));
-  if (info.check === "unsupported") notes.push(el("p", { class: "note", text: `Message id ${info.msgid} is not in the common dialect (it may come from another dialect, such as ardupilotmega, or be noise). Without its CRC_EXTRA the checksum cannot be checked, so it is unsupported, not counted as corrupt.` }));
+  if (info.check === "unsupported") notes.push(el("p", { class: "note", text: `Message id ${info.msgid} is outside the pinned common/ArduPilot definitions (it may be a custom dialect or noise). Without its CRC_EXTRA the checksum cannot be checked, so it is unsupported, not counted as corrupt.` }));
   if (info.check === "reject") notes.push(el("p", { class: "note", text: `Incompat flags ${hexN(info.iflags, 2)} include bits other than "signed", which this parser does not support.` }));
   $("detail-notes").replaceChildren(...notes);
 
@@ -680,7 +688,7 @@ function renderDetail(route) {
         el("tbody", {}, ...g.fields.map((f) => el("tr", { class: f.trimmed ? "trimmed" : null },
           el("td", {}, el("button", { type: "button", class: "fieldbtn", "data-key": f.key, "aria-pressed": "false", onclick: () => selectField(f.key, true) }, f.name)),
           el("td", { class: /^0x/.test(f.value) ? "val mono" : "val", text: f.value + (f.units ? ` ${f.units}` : "") }),
-          el("td", { text: f.trimmed ? [f.reading, "not sent (trimmed zero bytes)"].filter(Boolean).join("; ") : f.reading }),
+          el("td", { text: f.trimmed ? [f.reading, `${f.wireBytes} wire bytes; remaining bytes reconstructed as zero`].filter(Boolean).join("; ") : f.reading }),
           el("td", { class: "bytes", text: byteRange(f.from - a.off, f.to - 1 - a.off) })))))));
     } else if (g.note) {
       kids.push(el("p", { class: "note", text: g.note }));
@@ -739,8 +747,8 @@ function renderHex(a, perRow = 16) {
   for (const g of a.groups) {
     const cls = { ts: "seg-ts", header: "seg-hdr", payload: "seg-pay", crc: "seg-crc", sig: "seg-sig" }[g.id];
     const name = { ts: "tlog timestamp", header: "header", payload: "payload", crc: "CRC", sig: "signature" }[g.id];
-    const from = g.id === "payload" ? a.off + 10 : Math.min(...g.fields.map((f) => f.from));
-    const to = g.id === "payload" ? a.off + 10 + a.plen : Math.max(...g.fields.map((f) => f.to));
+    const from = g.id === "payload" ? a.off + a.hlen : Math.min(...g.fields.map((f) => f.from));
+    const to = g.id === "payload" ? a.off + a.hlen + a.plen : Math.max(...g.fields.map((f) => f.to));
     if (Number.isFinite(from) && to > from) segs.push({ from, to: Math.min(to, end), cls, name });
   }
   const segOf = (o) => segs.find((s) => o >= s.from && o < s.to);
@@ -799,6 +807,7 @@ function onHexClick(ev) {
   const span = ev.target.closest(".b");
   if (!span || !state.anatomy) return;
   const o = Number(span.dataset.o);
+  $("mutation-offset").value = String(o);
   const hits = state.anatomy.fields.filter((f) => o >= f.from && o < f.to).sort((x, y) => (x.to - x.from) - (y.to - y.from));
   if (hits.length) selectField(hits[0].key, true);
 }
@@ -861,6 +870,39 @@ async function exportFinding() {
     (f.file.sha256 ? "." : "; SHA-256 unavailable outside a secure context.");
 }
 
+async function exportCapture(format) {
+  if (!state.result || state.busy) return;
+  const snapshot = state.result;
+  const report = await buildCaptureReport({ result: snapshot, bytes: state.bytes, fileName: state.name, isSample: state.isSample, source: state.sourceScope });
+  if (state.result !== snapshot) throw new Error('Capture changed before export. Try again.');
+  const text = format === 'json' ? JSON.stringify(report, null, 2) + '\n' : format === 'csv' ? reportCsv(report) : reportMarkdown(report);
+  const blob = new Blob([text], { type: ({ json: 'application/json', csv: 'text/csv', md: 'text/markdown' })[format] });
+  if (blob.size > 64 * 1024 * 1024) throw new Error('Report exceeds the 64 MiB export limit. Use the native CLI for this capture.');
+  const url = URL.createObjectURL(blob);
+  const name = state.name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'capture';
+  const link = el('a', { href: url, download: `mavframe-${name}-report.${format}`, hidden: true });
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $('capture-export-status').textContent = `Downloaded ${format.toUpperCase()} report for ${fmt(report.summary.valid_frames)} valid frames. No raw payloads were included.`;
+}
+
+async function mutateByte() {
+  if (state.busy || !state.bytes) return;
+  const off = Number($('mutation-offset').value);
+  const mask = Number($('mutation-mask').value);
+  if (!Number.isSafeInteger(off) || off < 0 || off >= state.bytes.length) throw new Error('Choose a byte offset inside the current capture.');
+  if (![1, 2, 4, 8, 16, 32, 64, 128].includes(mask)) throw new Error('Choose a single bit to flip.');
+  const original = state.original || { bytes: state.bytes, name: state.name, isSample: state.isSample };
+  const selected = state.bytes;
+  const byte = state.bytes[off] ^ mask;
+  const blob = new Blob([state.bytes.subarray(0, off), Uint8Array.of(byte), state.bytes.subarray(off + 1)]);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (state.busy || state.bytes !== selected) throw new Error('A different capture operation started. Try the mutation again.');
+  if (!await run(bytes, `${original.name} (modified copy)`, original.isSample)) return;
+  state.original = original;
+  $('mutation-status').textContent = `Flipped bit ${mask} at byte ${fmt(off)} in a copy; the C/Wasm parser checked the changed bytes. Original retained. Open Capture for totals or select the changed frame.`;
+}
+
 // ---------- menu sheet and theme ----------
 const focusables = (root) => [...root.querySelectorAll("a[href], button:not([disabled]), select, input, [tabindex='0']")].filter((e) => e.offsetParent !== null);
 
@@ -903,7 +945,9 @@ function onSheetKey(ev) {
 function applyTheme(dark) {
   if (dark) document.documentElement.setAttribute("data-theme", "dark"); else document.documentElement.removeAttribute("data-theme");
   $("theme-toggle").setAttribute("aria-pressed", String(dark));
-  document.querySelector('meta[name="theme-color"]').setAttribute("content", dark ? "#0f1720" : "#f7f8fa");
+  $("theme-toggle").textContent = dark ? "Light theme" : "Dark theme";
+  $("theme-toggle").setAttribute("aria-label", `${dark ? 'Light' : 'Dark'} theme (current theme: ${dark ? 'dark' : 'light'})`);
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", dark ? "#1c1b26" : "#f6f5f2");
   document.querySelector('meta[name="color-scheme"]').setAttribute("content", dark ? "dark" : "light");
   if (state.result && !$("screen-frames").hidden) renderTimeline(state.route?.screen === "details" ? state.route.index : -1);
 }
@@ -916,6 +960,49 @@ function toggleTheme() {
 
 // ---------- wiring ----------
 function wire() {
+  const bindDialog = (opener, dialog, closer, first) => {
+    $(opener).addEventListener('click', () => { $(dialog).showModal(); $(first).focus(); });
+    $(closer).addEventListener('click', () => $(dialog).close());
+    $(dialog).addEventListener('close', () => {
+      const target = $(opener).offsetParent !== null ? $(opener) : [...document.querySelectorAll('main h1')].find(element => element.offsetParent !== null);
+      target?.focus();
+    });
+    $(dialog).addEventListener('keydown', event => {
+      if (event.key !== 'Tab') return;
+      const items = focusables($(dialog)).filter(element => !element.disabled);
+      if (event.shiftKey && (document.activeElement === items[0] || !items.includes(document.activeElement))) { event.preventDefault(); items.at(-1)?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === items.at(-1) || !items.includes(document.activeElement))) { event.preventDefault(); items[0]?.focus(); }
+    });
+  };
+  bindDialog('open-byte-editor', 'byte-editor-dialog', 'close-byte-editor', 'mutation-offset');
+  bindDialog('open-team-options', 'team-options-dialog', 'close-team-options', 'team-request');
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => { $('offline-status').textContent = 'Offline inspector ready. Only app assets and the synthetic sample are cached; private captures are not cached.'; })
+      .catch(() => { $('offline-status').textContent = 'Offline cache unavailable. Keep this tab open or reconnect before reloading.'; });
+  } else $('offline-status').textContent = 'Offline caching is unavailable in this browser. Keep the tab open while inspecting local files.';
+  const names = { capture: 'file-search', frames: 'scan-line', help: 'book-open' };
+  for (const link of document.querySelectorAll('.nav a[data-route]')) {
+    const icon = svgEl('svg', { class: 'nav-icon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
+    for (const [tag, attrs] of NAV_ICONS[names[link.dataset.route]]) icon.append(svgEl(tag, attrs));
+    link.prepend(icon);
+  }
+  wireSerial({
+    selectedFrame() {
+      const r = state.result;
+      if (!r?.frameCount || state.busy) return null;
+      const off = r.frames.off[0];
+      return state.bytes.slice(off, off + r.frames.flen[0]);
+    },
+    async inspectCapture(bytes, scope) {
+      if (state.busy) throw new Error('Finish or cancel the current file analysis, then capture another serial tail.');
+      $('format').value = 'raw';
+      if (await run(bytes, 'live-tail.raw', false)) {
+        state.sourceScope = scope;
+        state.original = { bytes, name: 'live-tail.raw', isSample: false };
+        render({ keepFocus: true });
+      }
+    },
+  });
   applyTheme(document.documentElement.getAttribute("data-theme") === "dark");
   $("theme-toggle").addEventListener("click", toggleTheme);
   $("menu-btn").addEventListener("click", openSheet);
@@ -943,6 +1030,14 @@ function wire() {
   $("cancel").addEventListener("click", () => state.abort?.abort());
   $("file").addEventListener("change", (e) => { openFile(e.target.files[0]); e.target.value = ""; });
   $("format").addEventListener("change", () => { if (state.bytes) run(state.bytes, state.name, state.isSample); });
+  for (const button of document.querySelectorAll('[data-capture-export]')) button.addEventListener('click', () => exportCapture(button.dataset.captureExport).catch(error => { $('capture-export-status').textContent = `Could not export: ${error.message}`; }));
+  $('mutate-byte').addEventListener('click', () => mutateByte().catch(error => { $('mutation-status').textContent = error.message; }));
+  $('restore-capture').addEventListener('click', async () => {
+    if (state.original && !state.busy) {
+      await run(state.original.bytes, state.original.name, state.original.isSample);
+      $('mutation-status').textContent = 'Original bytes restored and checked by the C/Wasm parser.';
+    }
+  });
 
   for (const chip of document.querySelectorAll(".chip")) chip.addEventListener("click", () => setFilters(chip.dataset.check, state.route.params.msg));
   $("msg-filter").addEventListener("change", (e) => setFilters(state.route.params.check, e.target.value === "" ? null : Number(e.target.value)));

@@ -44,7 +44,7 @@ export function waitParsed(page, name, timeout = 30000) {
 // Open the page with error and CSP-violation recording. opts: hash, route, noWait, plus newPage options.
 export async function openPage(browser, base, opts = {}) {
   const { hash, route, noWait, ...ctx } = opts;
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, ...ctx });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block', ...ctx });
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });

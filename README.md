@@ -5,21 +5,20 @@
 A link-quality view of a .tlog: CRC errors and sequence gaps per sender; not a
 flight plotter.
 
-mavframe is a dependency-free C99 parser for MAVLink v2 telemetry frames, the
+mavframe is a dependency-free C99 parser for mixed MAVLink v1/v2 telemetry frames, the
 protocol drones use to talk to ground stations. It is written in a firmware
 style (no heap allocation, a fixed 280-byte buffer, input accepted one byte at
 a time, recovery after corrupted bytes), but it has only been compiled for a
-microcontroller, never run on one (see Limitations). It exists to show that
-a frame parser can be small enough to read in one sitting and still be checked
-against a reference implementation (pymavlink), fuzzed, and measured. It only
+microcontroller, never run on one (see Limitations). Use it to inspect mixed captures, locate checksum failures and estimate
+sequence gaps without sending flight logs to a server. The library itself only
 finds and checks frames. The library does not decode message fields and it makes no
 decisions about what a message means or whether it should be accepted.
 
 The bundled sample flight is synthetic, and no capture from a real radio link
 has been tested yet.
 
-Status: beta (0.1.0), maintained by one student, best effort. Tested on x86-64
-Linux with gcc and clang. Security reports and the supported scope:
+Status: beta (0.1.0), maintained by one student, best effort. Native/Wasm tests cover Linux and macOS;
+physical-radio and microcontroller validation remain outstanding. Security reports and the supported scope:
 [SECURITY.md](SECURITY.md).
 
 ## Quick start
@@ -40,9 +39,9 @@ Output of the last command (frames on stdout, counters on stderr):
 
 ```
 bytes=113 frames=3 bad_crc=0 unknown_msgid=0 bad_flags=0 dropped_bytes=0
-off=0 msgid=82 sysid=7 compid=140 seq=125 len=39 signed=0 payload=a96089bc4b0d13c91c5f92487b8daf47ec8008c9d8582e48cf161749a8f770c96853154900000d
-off=51 msgid=77 sysid=88 compid=142 seq=79 len=10 signed=0 payload=00000300030000009662
-off=73 msgid=32 sysid=170 compid=116 seq=148 len=28 signed=0 payload=0100000099d2d8c81c818448f5ff83c8848d7dc89fd70dc98b8fe3c8
+off=0 version=2 msgid=82 sysid=7 compid=140 seq=125 len=39 signed=0 payload=a96089bc4b0d13c91c5f92487b8daf47ec8008c9d8582e48cf161749a8f770c96853154900000d
+off=51 version=2 msgid=77 sysid=88 compid=142 seq=79 len=10 signed=0 payload=00000300030000009662
+off=73 version=2 msgid=32 sysid=170 compid=116 seq=148 len=28 signed=0 payload=0100000099d2d8c81c818448f5ff83c8848d7dc89fd70dc98b8fe3c8
 ```
 
 `mavframe-dump [FILE]` reads stdin when FILE is missing or `-`;
@@ -90,14 +89,35 @@ no CRC_EXTRA in the table, so the CRC cannot be checked and the frame is not
 accepted), `MAVFRAME_BAD_FLAGS` (incompat flags other than "signed"),
 `MAVFRAME_DROPPED` (bytes discarded outside any frame).
 
-The CRC_EXTRA table (`src/mavframe_crc_extra_common.h`, 210 messages of the
-`common` dialect) is generated from pymavlink 2.4.50:
+The CRC_EXTRA table (`src/mavframe_crc_extra_common.h`) covers 326 messages from the pinned official
+common/ardupilotmega include graph. Nine XML files and their hashes live in `tools/mavlink-xml/` at
+upstream commit `12c898d88ce18d24e8caf6338596e98c5005bc97`. Generation uses pymavlink 2.4.50's generator
+against those local XML files, rather than its older prebuilt dialect, and cross-checks field order,
+types, arrays, lengths, CRC_EXTRA and 221 enum definitions offline:
 
 ```sh
 python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
 ```
 
 ## Browser inspector
+
+The upgraded packet bench adds complete field definitions for that pinned dialect graph, capture-wide JSON/CSV/Markdown
+reports, an editable copy of a selected byte, a seeded 1,000-call native-Wasm fuzz batch and real Web Serial input.
+All framing and CRC decisions use the same C parser. JavaScript decodes fields for display; v1 extension fields are
+omitted, and reconstructed v2 zero tails are distinguished from captured bytes. Signatures are carried, not authenticated.
+
+Live serial reads need a supported secure desktop browser and the user's port chooser. They run in a persistent native
+worker with a bounded 8 MiB byte history and a 1 GiB / 30-minute session limit. File inspection accepts up to 256 MiB.
+Session totals and retained-tail analysis are labelled separately; packet loss is inferred, not measured RF loss.
+No physical radio test is claimed. After an online visit the inspector and synthetic sample work offline;
+private captures are never placed in the service-worker cache. See [architecture](ARCHITECTURE.md),
+[decisions](DECISIONS.md), [failure modes](FAILURE_MODES.md) and [cost/support hypotheses](FINOPS_AND_PRICING.md).
+
+Browser dependencies are reproducible: `npm --prefix tests/web ci`, then
+`npm --prefix tests/web exec -- playwright install chromium`. After the native build and Python dependencies above,
+run `node --test tests/web/test_wasm.mjs tests/web/test_capture_report.mjs tests/web/test_live.mjs tests/web/test_display_fields.mjs tests/web/test_finding.mjs`
+and `node --test --test-concurrency=1 tests/web/test_routes.mjs tests/web/test_ui.mjs tests/web/test_upgrade.mjs`.
+Set `CHROME_PATH` to a system Chrome binary if needed. Automated axe is a finite check, not manual screen-reader certification.
 
 Live at https://anirudh763.github.io/mavframe/ (GitHub Pages, served from
 `docs/` on `main`). Locally: `python3 -m http.server -d docs` and open
@@ -106,7 +126,7 @@ http://localhost:8000/.
 ![The Frames screen at 1440 x 900: frame rows filtered to CRC failures on the left; on the right ATTITUDE at offset 13,866 with wire CRC 0xA4FE vs computed 0x66D8, the field tree and the hex bytes with the CRC bytes highlighted](docs/screenshots/frame-details-1440.png)
 
 `docs/` is a static page that runs this parser in the browser: `src/mavframe.c`,
-unchanged, compiled to a 4,086-byte WebAssembly module together with a small
+compiled directly to a 5,055-byte WebAssembly module together with a small
 glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
 microsecond timestamp before each frame) or a raw byte stream, or press
 **Load engineering sample**. Files are read in the tab and never uploaded.
@@ -139,22 +159,19 @@ details and packet bytes panes):
 - **Format help** (`#/help`): the frame layout, what CRC failed vs unsupported
   means, and the sequence-gap assumptions.
 
-The page is light by default; a "Dark theme" toggle switches to dark and is
-remembered in the browser. Payload fields are decoded for
-HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD,
-from an excerpt of the official MAVLink XML (`tools/mavlink-xml/`, pinned
-commit, SHA-256 checked); `tools/gen_web_defs.py` fails unless field order,
-types, length and CRC_EXTRA equal pymavlink's.
+The page is light by default; the theme button names the theme it will switch
+to, and the choice is remembered in the browser. Payload fields and enums are
+decoded from the pinned official common + ArduPilot XML include graph
+(`tools/mavlink-xml/`, SHA-256 checked): 326 messages and 221 enums.
+`tools/gen_web_defs.py` compares field order, types, lengths and CRC_EXTRA
+against pymavlink generated from that same XML snapshot.
 
 The bundled sample is an engineering fixture: `tools/gen_sample_tlog.py`
-generates it with known faults (1,496 valid frames, 3 CRC failures, 4 sequence
-gaps, 160 skipped bytes), so the tests can check exact counts. It is not a real
-flight. A search for a redistributable real MAVLink v2 .tlog found only
-MAVLink v1 captures (for example the 5.8 MB `flight.tlog` in the pymavlink and
-dronekit-la test data, which this parser reports as 0 valid v2 frames); the
-gomavlib, MAVSDK, MAVProxy, QGroundControl, ardupilot, mavlink and
-PX4-Autopilot repositories contain no .tlog at all. No real capture is
-bundled yet.
+generates it with known faults (1,497 valid frames, 3 CRC failures, 4 sequence gaps and 135 skipped bytes).
+One of those valid frames is the v1 heartbeat that the older v2-only parser skipped. The sample's bytes did not change:
+SHA-256 `810d99ac09d8bbe8a13f8bcbd1991126e9fa8bbad5262502fe08c1b7c84ea86d`.
+It is not a real flight. No physical-radio capture with verified provenance and redistribution permission is bundled;
+private local captures can be opened without uploading them.
 
 What the counts mean:
 
@@ -182,7 +199,7 @@ What the counts mean:
   restart), and 255 to 0 is in order. None of these are counted as CRC errors.
 - **Signed frames**: "signature present; not verified". Signatures are carried,
   not checked (that needs the link key).
-- MAVLink v1 frames and other bytes count as skipped bytes. In .tlog mode, a
+- MAVLink v1 and v2 frames are both parsed. Other bytes count as skipped. In .tlog mode, a
   0xFD byte inside a timestamp that the parser briefly takes for a frame start
   is not reported as a link error (20 in the sample). A test with 2,000 records,
   200 of them corrupted and many timestamps containing 0xFD, reports exactly
@@ -199,22 +216,24 @@ telemetry for a quadrotor (computed by the script, not taken from a simulator or
 a real flight), packed by pymavlink
 (`tools/gen_sample_tlog.py`), with three frames altered after packing, one frame
 never written and one MAVLink v1 record. The page reports what the generator
-wrote: 1,496 valid frames, 3 CRC errors, 4 sequence gaps (~4 frames missing: the
+wrote: 1,497 valid frames, 3 CRC errors, 4 sequence gaps (~4 frames missing: the
 dropped frame and the three corrupted ones), 0 duplicates, 0 out of order,
-160 skipped bytes. pymavlink's own .tlog reader also finds 1,496 valid frames.
+135 skipped bytes. pymavlink's own .tlog reader also finds 1,497 valid frames.
 
 ```sh
 pip install ziglang==0.17.1
 sh tools/build_wasm.sh                 # docs/mavframe.wasm (byte-for-byte reproducible)
 cmake --build build                    # also builds build/glue_dump: the same glue, native
-node --test tests/web/test_wasm.mjs    # 18 tests
-node --test tests/web/test_ui.mjs      # 17 tests in Chromium (Playwright) + axe-core, 1 optional screenshot step
+npm --prefix tests/web ci
+npm --prefix tests/web exec playwright install chromium
+node --test tests/web/test_wasm.mjs tests/web/test_capture_report.mjs tests/web/test_live.mjs tests/web/test_display_fields.mjs tests/web/test_finding.mjs
+node --test --test-concurrency=1 tests/web/test_upgrade.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs
 ```
 
 - The wasm and native builds of the same files give identical events (offset,
   id, status, header fields, length) and counters on the sample, a corrupted
   3,000-frame stream, signed frames and malformed input, fed in reads of 1, 2, 3,
-  7, 10, 13, 255 and 4,096 bytes and in one piece (43,812 events compared), and
+  7, 10, 13, 255 and 4,096 bytes and in one piece (46,971 events compared), and
   with the stream split into two reads at every byte boundary of two test
   streams (195 and 539 split points). CI rebuilds the wasm and fails if it
   differs from the committed file.
@@ -240,6 +259,11 @@ The page uses Atkinson Hyperlegible (SIL Open Font License 1.1, license text in
 `docs/css/OFL-Atkinson-Hyperlegible.txt`).
 
 ## Results
+
+The performance/size and common-only comparison measurements below describe the earlier v2/common-only baseline.
+They have not been remeasured for the expanded parser and should not be quoted as current-build throughput or size.
+Current upgrade evidence includes 1,014 native sanitizer checks, 20 Python cases, 326-message generator parity and a finite
+1,000-call mixed-version native/Wasm corpus (1,559 events), in addition to the existing differential corpus.
 
 All numbers below were measured in a shared cloud container (x86-64, 2 cores,
 gcc 13.3.0, clang 18.1.3, Python 3.13, pymavlink 2.4.50). Timings vary from
@@ -446,18 +470,16 @@ arm-none-eabi-size sz.o
 
 ## Limitations
 
-- MAVLink v2 only. v1 frames (start byte 0xFE) are treated as garbage.
+- Mixed MAVLink v1/v2 is supported; non-MAVLink and uncheckable custom-dialect candidates remain separately reported.
 - Signatures are carried, not verified. `mavframe_signature()` returns the 13
   bytes; nothing checks the SHA-256 tag or the timestamp. One consequence was
   measured above: if a signed frame loses part of its signature, the missing
   bytes are taken from the following data and the next frame can be lost (21
   of 10,542 intact frames in the corrupted test streams).
-- Only the `common` dialect as shipped with pymavlink 2.4.50 is known. Frames
-  from other dialects (ardupilotmega, vendor messages) are reported as
-  `MAVFRAME_UNKNOWN_MSGID` and dropped.
-- No message decoding: the payload is returned as bytes. Payload length is not
-  compared with the message definition, and v2 zero-trimmed payloads are not
-  padded back.
+- Only the checksum-pinned common/ardupilotmega include graph is known. Other private/vendor definitions need
+  a reviewed generator update; their unknown IDs are not called corrupt.
+- The C library returns raw payload bytes and does not validate their application meaning. The browser decodes
+  supported field definitions and reconstructs v2 zero tails for display; that is not proof of sensor truth.
 - A 16-bit CRC lets random damage through about once in 65,536 candidates.
   Nothing here reduces that.
 - A candidate whose header announces more bytes than ever arrive holds back up
@@ -470,17 +492,17 @@ arm-none-eabi-size sz.o
 - The corruption model in the tests is synthetic (independent damage per
   frame at a 30% rate), and so is the sample flight. No capture from a real
   radio link has been tested yet.
-- Compiled for Cortex-M3 but never run on a microcontroller. Tested only on
-  x86-64 Linux with gcc and clang.
+- Compiled for Cortex-M3 but never run on a microcontroller. Current finite checks include Linux and macOS;
+  no avionics certification or physical-radio validation is claimed.
 - No command validation, filtering or anomaly detection of any kind. This is a
   frame parser.
-- The browser inspector decodes payload fields for six messages only; other
-  messages show raw bytes. Rates need .tlog timestamps. Captures over 256 MB
-  are refused. Sequence-gap counts are estimates (see Browser inspector).
+- The browser decodes 326 pinned message definitions. File rates need a positive .tlog interval; live rates use
+  browser chunk-arrival timing. Files over 256 MiB are refused. Frame/finding/grouping retention is bounded and
+  disclosed in exports. Sequence-gap counts are estimates (see Browser inspector).
 
 ## How this was built
 
-Built with AI assistance (Claude). Every number above comes from the commands shown.
+Built with AI assistance (Claude and Codex). Measurements are tied to the named commands and build scope above.
 
 ## License
 

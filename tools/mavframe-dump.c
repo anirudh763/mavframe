@@ -1,8 +1,8 @@
 /*
- * mavframe-dump: read a MAVLink v2 byte stream from FILE (or stdin), print one
+ * mavframe-dump: read a MAVLink v1/v2 byte stream from FILE (or stdin), print one
  * line per decoded frame to stdout and a summary of the parser counters to stderr.
  *
- *   off=<stream offset> msgid=<n> sysid=<n> compid=<n> seq=<n> len=<n> signed=<0|1> payload=<hex>
+ *   off=<stream offset> version=<1|2> msgid=<n> sysid=<n> compid=<n> seq=<n> len=<n> signed=<0|1> payload=<hex>
  *
  * Exit status: 0 on success, 1 if the input cannot be opened or read, 2 for bad arguments.
  */
@@ -23,8 +23,9 @@ static void handle(const mavframe_parser *p, mavframe_status st)
         return;
     payload = mavframe_payload(p);
     len = mavframe_payload_len(p);
-    printf("off=%llu msgid=%lu sysid=%u compid=%u seq=%u len=%u signed=%d payload=",
-           fed - mavframe_pending(p), (unsigned long)mavframe_msgid(p), (unsigned)mavframe_sysid(p),
+    printf("off=%llu version=%u msgid=%lu sysid=%u compid=%u seq=%u len=%u signed=%d payload=",
+           fed - mavframe_pending(p), (unsigned)mavframe_version(p), (unsigned long)mavframe_msgid(p),
+           (unsigned)mavframe_sysid(p),
            (unsigned)mavframe_compid(p), (unsigned)mavframe_seq(p), len, mavframe_signed(p));
     for (i = 0; i < len; i++)
         printf("%02x", (unsigned)payload[i]);
@@ -36,7 +37,7 @@ static void usage(FILE *out)
     fputs("usage: mavframe-dump [FILE]\n"
           "       mavframe-dump --help | --version\n"
           "\n"
-          "Find MAVLink v2 frames in a raw byte stream read from FILE, or from\n"
+          "Find MAVLink v1 and v2 frames in a raw byte stream read from FILE, or from\n"
           "standard input when FILE is missing or '-'. Prints one line per valid\n"
           "frame to stdout and the parser counters to stderr. The input is raw\n"
           "bytes: a .tlog file also works, but its 8-byte timestamps count as\n"

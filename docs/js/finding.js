@@ -17,11 +17,11 @@ export async function sha256Hex(bytes) {
 }
 
 export const ASSUMPTIONS = [
-  "Frames are found and CRC-checked by src/mavframe.c compiled to WebAssembly, with CRC_EXTRA values from the MAVLink common dialect.",
+  "Frames are found and CRC-checked by src/mavframe.c compiled to WebAssembly, with CRC_EXTRA values from pinned common/ArduPilot definitions.",
   "Message signatures are carried but not verified: a signature present does not mean the frame is authentic.",
   "Sequence gaps assume one fully observed channel per sender and in-order arrival; routing, filtering or merged links can create apparent loss.",
-  "Message ids outside the common dialect are not checked (no CRC_EXTRA) and are reported as unsupported, not as corrupt.",
-  "MAVLink v1 frames are not parsed and count as skipped bytes.",
+  "Message ids outside the pinned dialects are not checked (no CRC_EXTRA) and are reported as unsupported, not as corrupt.",
+  "MAVLink v1 and v2 use their native header/CRC rules; v2 zero-filled field tails are reconstructed values, not captured bytes.",
 ];
 
 export async function buildFinding({ result, bytes, parser, ref, fileName, isSample = false, includeAllPayloads = false }) {
@@ -43,6 +43,7 @@ export async function buildFinding({ result, bytes, parser, ref, fileName, isSam
     sysid: info.sysid,
     compid: info.compid,
     seq: info.seq,
+    protocol_version: a.version,
     incompat_flags: hexN(info.iflags, 2),
     signature: a.signed ? "present; not verified" : "absent",
     crc: a.crc ? { wire: hexN(a.crc.wire, 4), computed: a.crc.computed === null ? null : hexN(a.crc.computed, 4),
@@ -52,9 +53,9 @@ export async function buildFinding({ result, bytes, parser, ref, fileName, isSam
     const s = info.seqIssue;
     finding.sequence = { kind: s.kind, prev_seq: s.prevSeq, seq: s.seq, missing_estimate: s.missing || 0, note: "estimate; assumes one fully observed channel and in-order arrival" };
   }
-  const out = { header_hex: hex(bytes.subarray(a.off, Math.min(a.off + 10, a.end))) };
+  const out = { header_hex: hex(bytes.subarray(a.off, Math.min(a.off + a.hlen, a.end))) };
   if (a.crc) out.crc_hex = hex(bytes.subarray(a.crc.at, a.crc.at + 2));
-  const payload = bytes.subarray(a.off + 10, Math.min(a.off + 10 + a.plen, a.end));
+  const payload = bytes.subarray(a.off + a.hlen, Math.min(a.off + a.hlen + a.plen, a.end));
   if (info.check === "unsupported" || info.check === "reject") {
     out.payload_omitted = `${a.plen} payload bytes declared; only the candidate header was retained. Payload boundaries are not established, so raw payload export is unavailable for this row.`;
   } else if (includeAllPayloads) {

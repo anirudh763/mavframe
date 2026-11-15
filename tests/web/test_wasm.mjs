@@ -69,8 +69,9 @@ test("sample flight: counts match the generator's ground truth", async () => {
   assert.deepEqual(got, truth.messages);
   assert.equal(r.firstTs, truth.first_ts_us);
   assert.equal(r.endTs, truth.last_ts_us);
-  // pymavlink's own .tlog reader saw the same number of valid frames.
-  assert.equal(truth.pymavlink_tlog_reader.valid_v2_frames, r.frameCount);
+  // The sample contains one v1 HEARTBEAT in addition to its v2 packets.
+  assert.equal(truth.pymavlink_tlog_reader.valid_v2_frames + truth.pymavlink_tlog_reader.valid_v1_frames,
+    r.frameCount);
   const att = r.messages.find((m) => m.name === "ATTITUDE");
   assert.ok(Math.abs(att.rateHz - 10) < 0.05, `ATTITUDE rate ${att.rateHz}`);
 });
@@ -90,7 +91,7 @@ test("decoded payload fields equal pymavlink's values", async () => {
     assert.deepEqual(values, d.fields, `${d.name} at ${d.offset}`);
     checked++;
   }
-  assert.equal(checked, 51);
+  assert.equal(checked, 60);
 });
 
 test("results do not depend on the chunk size", async () => {
@@ -145,10 +146,10 @@ test("a 0xFD inside a .tlog timestamp is not reported as a link error", async ()
   assert.equal(raw.issues[0].status, STATUS.BAD_FLAGS);
 });
 
-test("random bytes and v1 frames are skipped, not fatal; bytes are accounted for", async () => {
+test("random bytes are bounded and valid MAVLink v1 frames use the native parser", async () => {
   let s = 12345;
   const junk = new Uint8Array(1 << 20).map(() => ((s = (s * 1103515245 + 12345) >>> 0) >>> 24));
-  const v1 = new Uint8Array([0xfe, 9, 0, 2, 191, 0, 0, 0, 0, 0, 18, 8, 0, 4, 3, 0x2c, 0x5e]);
+  const v1 = new Uint8Array([0xfe, 9, 7, 1, 1, 0, 4, 0, 0, 0, 0, 2, 3, 3, 3, 0x11, 0x7e]);
   for (const bytes of [junk, v1, new Uint8Array(0), new Uint8Array([0xfd])]) {
     const r = await analyze(bytes, { parser, format: "raw" });
     let frameBytes = 0;
@@ -156,8 +157,13 @@ test("random bytes and v1 frames are skipped, not fatal; bytes are accounted for
     assert.equal(r.skippedBytes + frameBytes, bytes.length);
   }
   const r = await analyze(v1, { parser, format: "raw" });
-  assert.equal(r.frameCount, 0);
-  assert.equal(r.skippedBytes, v1.length);
+  assert.equal(r.frameCount, 1);
+  assert.equal(r.skippedBytes, 0);
+  assert.equal(frameAt(r, 0).msgid, 0);
+  assert.equal(frameAt(r, 0).flen, 17);
+  const wasm = rawEvents(parser, v1, [v1.length]);
+  assert.deepEqual(wasm, nativeEvents(v1, []));
+  assert.deepEqual(wasm.events.map((e) => [e[2], e[3], e[4], e[5], e[6], e[8]]), [[1, 7, 1, 1, 9, 17]]);
 });
 
 test("format detection and zero-trimmed payloads", () => {
@@ -168,7 +174,7 @@ test("format detection and zero-trimmed payloads", () => {
   const d = decodePayload(74, new Uint8Array([0]));
   assert.equal(d.trimmed, true);
   assert.ok(d.fields.every((f) => f.value === 0));
-  assert.equal(decodePayload(2, new Uint8Array(12)), null);
+  assert.equal(decodePayload(2, new Uint8Array(12)).fields.length, 2);
 });
 
 test("hostile input: issue details are capped, counts stay exact", async () => {
@@ -288,13 +294,43 @@ test("native and wasm agree when the stream is split into two reads at every byt
   }
 });
 
+test("native and Wasm agree across 1,000 seeded mixed-version feed calls", () => {
+  const v1 = Uint8Array.from([0xfe, 9, 7, 1, 1, 0, 4, 0, 0, 0, 0, 2, 3, 3, 3, 0x11, 0x7e]);
+  const v2 = Uint8Array.from([0xfd, 9, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 2, 3, 0x51, 4, 3, 0xe7, 0x1e]);
+  const segments = [], reads = [];
+  let state = 0x9e3779b9;
+  const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 24;
+  for (let i = 0; i < 1000; i++) {
+    const noise = Uint8Array.from({ length: i % 13 }, random);
+    const part = [noise];
+    if (i % 2 === 0) part.push(v1);
+    if (i % 3 !== 0) part.push(v2);
+    if (i % 5 === 0) {
+      const damaged = v1.slice();
+      damaged[damaged.length - 1] ^= 1;
+      part.push(damaged);
+    }
+    if (i % 7 === 0) part.push(v2.subarray(0, 8)); // incomplete v2 header at the chunk boundary
+    const segment = Buffer.concat(part.map((x) => Buffer.from(x)));
+    segments.push(segment);
+    reads.push(segment.length);
+  }
+  const bytes = new Uint8Array(Buffer.concat(segments));
+  const wasm = rawEvents(parser, bytes, reads);
+  const native = nativeEvents(bytes, reads.map(String));
+  assert.deepEqual(wasm, native);
+  assert.ok(wasm.events.some((e) => e[2] === STATUS.FRAME && e[0] < bytes.length && bytes[e[0]] === 0xfe));
+  assert.ok(wasm.events.some((e) => e[2] === STATUS.BAD_CRC));
+  console.log(`# mixed-version differential: ${reads.length} feed calls, ${wasm.events.length} events`);
+});
+
 test("unknown message ids are counted as unsupported, not as corrupt", async () => {
   const r = await analyze(readCase("malformed.bin"), { parser, format: "raw" });
   assert.ok(r.unsupported >= 1);
   assert.ok(r.crcErrors >= 1);
   assert.ok(r.rejects >= 1);
   assert.equal(r.unsupported, r.stats.unknown_msgid);
-  assert.equal(r.crcErrors, r.stats.bad_crc);
+  assert.equal(r.crcErrors + r.nestedCrc, r.stats.bad_crc);
   assert.equal(r.rejects, r.stats.bad_flags);
   assert.ok(r.issues.filter((i) => i.kind === "unsupported").every((i) => i.status === STATUS.UNKNOWN_MSGID));
 });
@@ -346,7 +382,18 @@ test("sequence numbers: duplicates and backward steps are not gaps; 255 -> 0 is 
 
 test("corrupted .tlog frames give CRC errors only: no false rejects from timestamp or frame bytes", async () => {
   const expect = JSON.parse(fs.readFileSync(path.join(CASES, "corrupt-ts.json"), "utf8"));
-  const r = await analyze(readCase("corrupt-ts.tlog"), { parser, format: "tlog" });
+  const bytes = readCase("corrupt-ts.tlog");
+  const events = rawEvents(parser, bytes, chunks(bytes.length, 4096)).events;
+  const crcEvents = events.filter((e) => e[2] === STATUS.BAD_CRC);
+  const injected = new Set(expect.corrupt_offsets);
+  for (const off of injected) assert.ok(crcEvents.some((e) => e[0] === off), `injected CRC candidate at ${off}`);
+  const v1TimestampCrcs = crcEvents.filter((e) => bytes[e[0]] === 0xfe);
+  assert.equal(v1TimestampCrcs.length, 11);
+  assert.ok(v1TimestampCrcs.every((e) => expect.timestamp_fe_offsets.includes(e[0])));
+  assert.equal(crcEvents.length, expect.crc_errors + v1TimestampCrcs.length);
+  console.log(`# corrupt-ts: ${injected.size} injected CRCs; ${v1TimestampCrcs.length} v1 candidates start at timestamp FE bytes: ${v1TimestampCrcs.map((e) => e[0]).join(",")}`);
+
+  const r = await analyze(bytes, { parser, format: "tlog" });
   assert.equal(r.validFrames, expect.frames);
   assert.equal(r.crcErrors, expect.crc_errors);
   assert.equal(r.rejects, 0, "bad-flags issues");
@@ -356,16 +403,27 @@ test("corrupted .tlog frames give CRC errors only: no false rejects from timesta
   assert.ok(r.stats.bad_flags + r.stats.unknown_msgid > 1000);
   assert.equal(r.crcErrors + r.unsupported + r.rejects + r.timestampArtifacts + r.insideFailedFrame,
     r.stats.bad_crc + r.stats.unknown_msgid + r.stats.bad_flags);
-  assert.equal(r.stats.bad_crc, expect.crc_errors);
+  assert.equal(r.stats.bad_crc, expect.crc_errors + v1TimestampCrcs.length);
 });
 
-test("critic's .tlog (20,000 frames, 3 senders, seed 9001): nested fake frames add no CRC errors or rejects", async () => {
+test("critic's .tlog (seed 9001): reports 200 injected flips and suppresses v1 rescan candidates", async () => {
   // Generated by tests/web/gen_critic_tlog.py (seed 9001); 200 frames corrupted,
   // 0xFD forced into ~15% of timestamps. Rescanning one corrupted
   // ENCAPSULATED_DATA frame finds a fake HEARTBEAT header whose CRC also fails.
   const expect = JSON.parse(fs.readFileSync(path.join(CASES, "critic-9001.json"), "utf8"));
-  const r = await analyze(readCase("critic-9001.tlog"), { parser, format: "tlog" });
+  const bytes = readCase("critic-9001.tlog");
+  const events = rawEvents(parser, bytes, chunks(bytes.length, 4096)).events;
+  const crcEvents = events.filter((e) => e[2] === STATUS.BAD_CRC);
+  const injected = new Set(expect.corrupt_offsets);
+  for (const off of injected) assert.ok(crcEvents.some((e) => e[0] === off), `injected CRC candidate at ${off}`);
+  assert.equal(crcEvents.length, expect.crc + 239); // rescan candidates inside damaged stream spans
+
+  const r = await analyze(bytes, { parser, format: "tlog" });
   assert.equal(r.validFrames, expect.frames);
+  const reported = r.issues.filter((i) => i.kind === "crc").map((i) => i.off).sort((a, b) => a - b);
+  assert.deepEqual(reported, [...injected].sort((a, b) => a - b));
+  for (const off of [535007, 535108, 723154])
+    assert.ok(!reported.includes(off), `v1 rescan candidate at ${off} is not an injected CRC failure`);
   assert.equal(r.crcErrors, expect.crc);
   assert.equal(r.unsupported, 0);
   assert.equal(r.rejects, 0);
@@ -376,7 +434,7 @@ test("critic's .tlog (20,000 frames, 3 senders, seed 9001): nested fake frames a
     r.stats.bad_crc + r.stats.unknown_msgid + r.stats.bad_flags);
 });
 
-test("ArduPilot capture: payload bytes of unsupported frames are not rejects, and they use up sequence numbers", async () => {
+test("ArduPilot messages are CRC-checked and decoded from the full dialect table", async () => {
   // HEARTBEAT (common) alternating with MEMINFO (id 152, ardupilotmega only);
   // MEMINFO's payload contains 0xFD. A clean capture: no rejects, no gaps.
   const expect = JSON.parse(fs.readFileSync(path.join(CASES, "ardupilot.json"), "utf8"));
@@ -388,5 +446,6 @@ test("ArduPilot capture: payload bytes of unsupported frames are not rejects, an
     assert.equal(r.crcErrors, expect.crc_errors, format);
     assert.equal(r.gaps, expect.gaps, `${format}: sequence gaps`);
     assert.equal(r.missingFrames, 0, format);
+    assert.equal(r.messages.find((m) => m.name === "MEMINFO")?.count, 100, format);
   }
 });

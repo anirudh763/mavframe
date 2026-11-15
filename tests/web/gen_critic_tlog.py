@@ -30,6 +30,7 @@ def main(path):
     n = 20000
     corrupt_idx = set(rng.sample(range(n), 200))
     out = bytearray()
+    corrupt_offsets = []
     t = 1767225600123457
     gaps_expected = 0
     prev_lost = {s: False for s in links}
@@ -39,6 +40,7 @@ def main(path):
         fr = bytearray(harness.random_message(rng, rng.choice(classes)).pack(lk))
         lk.seq = (lk.seq + 1) % 256
         if i in corrupt_idx:
+            corrupt_offsets.append(len(out) + 8)
             p = rng.randrange(10, len(fr))
             fr[p] ^= rng.randrange(1, 256)
             if not prev_lost[s]:
@@ -57,7 +59,8 @@ def main(path):
     with open(path, "wb") as f:
         f.write(out)
     with open(os.path.splitext(path)[0] + ".json", "w", encoding="utf-8") as f:
-        json.dump({"frames": n - 200, "crc": 200, "gaps_expected": gaps_expected, "seed": 9001}, f)
+        json.dump({"frames": n - 200, "crc": 200, "gaps_expected": gaps_expected,
+                   "corrupt_offsets": corrupt_offsets, "seed": 9001}, f)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,20 @@
 /*
- * mavframe - MAVLink v2 frame parser. See include/mavframe.h for the API.
+ * mavframe - MAVLink v1/v2 frame parser. See include/mavframe.h for the API.
  *
  * How it works: bytes are appended to a fixed 280-byte buffer (the largest
  * possible v2 frame). step() looks at buf[head..tail) and reports at most
  * one event:
  *
- *   - buf[head] is not a start byte (0xFD)     -> drop up to the next one
- *   - fewer than 10 bytes                      -> need more
- *   - unsupported incompat flags               -> fail
- *   - message id not in the CRC_EXTRA table    -> fail
+ *   - buf[head] is not a start byte (0xFE/0xFD)-> drop up to the next one
+ *   - fewer than the version's header          -> need more
+ *   - unsupported v2 incompat flags            -> fail
+ *   - unknown message id                      -> report after announced frame
  *   - fewer bytes than the header announces    -> need more
  *   - CRC mismatch                             -> fail
  *   - otherwise                                -> frame
  *
  * A failure releases only the start byte plus whatever lies before the next
- * 0xFD in the buffer. The following bytes stay buffered and are examined
+ * start byte. The following bytes stay buffered and are examined
  * again from that next 0xFD, so a valid frame that begins inside a corrupted
  * one is still found. Released bytes are removed lazily on the next call so
  * the accessors can keep pointing at the frame that was just reported.
@@ -68,6 +68,10 @@ static mavframe_status fail(mavframe_parser *p, mavframe_status why)
     const uint8_t *b = p->buf + p->head;
     uint16_t avail = (uint16_t)(p->tail - p->head);
     const uint8_t *next = memchr(b + 1, MAVFRAME_STX, (size_t)(avail - 1));
+    const uint8_t *next_v1 = memchr(b + 1, MAVFRAME_V1_STX, (size_t)(avail - 1));
+
+    if (next == NULL || (next_v1 != NULL && next_v1 < next))
+        next = next_v1;
 
     p->consume = next ? (uint16_t)(next - b) : avail;
     p->stats.dropped_bytes += p->consume;
@@ -84,17 +88,24 @@ static mavframe_status fail(mavframe_parser *p, mavframe_status why)
  * the header first, then the whole frame. */
 static uint16_t bytes_needed(const uint8_t *b, uint16_t avail)
 {
-    if (avail < MAVFRAME_HEADER_LEN)
-        return MAVFRAME_HEADER_LEN;
-    return (uint16_t)(MAVFRAME_HEADER_LEN + b[1] + MAVFRAME_CRC_LEN +
-                      ((b[2] & MAVFRAME_IFLAG_SIGNED) ? MAVFRAME_SIGNATURE_LEN : 0));
+    uint16_t header_len;
+
+    if (avail == 0)
+        return 1;
+    header_len = b[0] == MAVFRAME_V1_STX ? MAVFRAME_V1_HEADER_LEN : MAVFRAME_HEADER_LEN;
+    if (avail < header_len)
+        return header_len;
+    return (uint16_t)(header_len + b[1] + MAVFRAME_CRC_LEN +
+                      ((header_len == MAVFRAME_HEADER_LEN && (b[2] & MAVFRAME_IFLAG_SIGNED))
+                           ? MAVFRAME_SIGNATURE_LEN
+                           : 0));
 }
 
 static mavframe_status step(mavframe_parser *p)
 {
     const uint8_t *b;
     uint16_t avail, total, crc;
-    uint8_t extra;
+    uint8_t extra, header_len;
     uint32_t msgid;
 
     /* Fast path for the common call: nothing was released and the candidate
@@ -109,19 +120,22 @@ static mavframe_status step(mavframe_parser *p)
 
     /* After a frame found during a rescan, the bytes behind it are whatever
      * came next in the stream, not necessarily a start byte. */
-    if (avail > 0 && b[0] != MAVFRAME_STX)
+    if (avail > 0 && b[0] != MAVFRAME_STX && b[0] != MAVFRAME_V1_STX)
         return fail(p, MAVFRAME_DROPPED);
 
-    if (avail >= MAVFRAME_HEADER_LEN) {
-        if (b[2] & (uint8_t)~MAVFRAME_IFLAG_SIGNED)
+    header_len = avail > 0 && b[0] == MAVFRAME_V1_STX ? MAVFRAME_V1_HEADER_LEN : MAVFRAME_HEADER_LEN;
+    if (avail >= header_len) {
+        if (header_len == MAVFRAME_HEADER_LEN && (b[2] & (uint8_t)~MAVFRAME_IFLAG_SIGNED))
             return fail(p, MAVFRAME_BAD_FLAGS);
-        msgid = (uint32_t)b[7] | ((uint32_t)b[8] << 8) | ((uint32_t)b[9] << 16);
+        msgid = header_len == MAVFRAME_V1_HEADER_LEN
+                    ? b[5]
+                    : (uint32_t)b[7] | ((uint32_t)b[8] << 8) | ((uint32_t)b[9] << 16);
         if (!mavframe_crc_extra(msgid, &extra))
             return fail(p, MAVFRAME_UNKNOWN_MSGID);
         total = bytes_needed(b, avail);
         if (avail >= total) {
-            const uint8_t *c = b + MAVFRAME_HEADER_LEN + b[1];
-            crc = mavframe_crc16(MAVFRAME_CRC_INIT, b + 1, (size_t)(MAVFRAME_HEADER_LEN - 1) + b[1]);
+            const uint8_t *c = b + header_len + b[1];
+            crc = mavframe_crc16(MAVFRAME_CRC_INIT, b + 1, (size_t)(header_len - 1) + b[1]);
             crc = mavframe_crc16(crc, &extra, 1);
             if (crc != (uint16_t)(c[0] | ((uint16_t)c[1] << 8)))
                 return fail(p, MAVFRAME_BAD_CRC);
@@ -155,8 +169,8 @@ size_t mavframe_feed(mavframe_parser *p, const uint8_t *data, size_t len, mavfra
     while (*status == MAVFRAME_NEED_MORE && used < len) {
         size_t n;
         if (p->tail == 0) {
-            /* Empty buffer: only a start byte may enter it. */
-            if (data[used] != MAVFRAME_STX) {
+            /* Empty buffer: only either protocol start byte may enter it. */
+            if (data[used] != MAVFRAME_STX && data[used] != MAVFRAME_V1_STX) {
                 used++;
                 p->stats.bytes++;
                 p->stats.dropped_bytes++;
