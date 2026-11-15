@@ -2,7 +2,7 @@
  * libFuzzer target for the WebAssembly glue (web/wasm/mavframe_wasm.c),
  * built natively so ASan/UBSan can watch it. It drives the same exported
  * functions the browser calls and checks every recorded event:
- *   - the event lies inside the bytes fed so far and starts with 0xFD;
+ *   - the event lies inside the bytes fed so far and starts with 0xFD or 0xFE;
  *   - its header fields equal the input bytes at its offset;
  *   - a frame's length matches its header;
  *   - per-status event counts equal the parser's own counters (no event lost).
@@ -49,15 +49,24 @@ static void check_events(void)
         uint32_t off = rd32(e), msgid = rd32(e + 4);
         uint8_t st = e[8];
         uint16_t flen = (uint16_t)(e[14] | e[15] << 8);
-        const uint8_t *b = stream + off;
+        const uint8_t *b;
+        uint8_t header;
 
         REQUIRE(st >= MAVFRAME_FRAME && st <= MAVFRAME_BAD_FLAGS);
-        REQUIRE(flen >= MAVFRAME_HEADER_LEN && off + flen <= fed);
-        REQUIRE(b[0] == MAVFRAME_STX);
-        REQUIRE(msgid == ((uint32_t)b[7] | (uint32_t)b[8] << 8 | (uint32_t)b[9] << 16));
-        REQUIRE(e[9] == b[4] && e[10] == b[5] && e[11] == b[6] && e[12] == b[1] && e[13] == b[2]);
+        REQUIRE(flen >= MAVFRAME_V1_HEADER_LEN && off <= fed && flen <= fed - off);
+        b = stream + off;
+        REQUIRE(b[0] == MAVFRAME_STX || b[0] == MAVFRAME_V1_STX);
+        header = b[0] == MAVFRAME_V1_STX ? MAVFRAME_V1_HEADER_LEN : MAVFRAME_HEADER_LEN;
+        REQUIRE(flen >= header);
+        if (header == MAVFRAME_V1_HEADER_LEN) {
+            REQUIRE(msgid == b[5]);
+            REQUIRE(e[9] == b[2] && e[10] == b[3] && e[11] == b[4] && e[12] == b[1] && e[13] == 0);
+        } else {
+            REQUIRE(msgid == ((uint32_t)b[7] | (uint32_t)b[8] << 8 | (uint32_t)b[9] << 16));
+            REQUIRE(e[9] == b[4] && e[10] == b[5] && e[11] == b[6] && e[12] == b[1] && e[13] == b[2]);
+        }
         if (st == MAVFRAME_FRAME || st == MAVFRAME_BAD_CRC)
-            REQUIRE(flen == MAVFRAME_HEADER_LEN + b[1] + MAVFRAME_CRC_LEN + ((b[2] & 1) ? MAVFRAME_SIGNATURE_LEN : 0));
+            REQUIRE(flen == header + b[1] + MAVFRAME_CRC_LEN + ((header == MAVFRAME_HEADER_LEN && (b[2] & 1)) ? MAVFRAME_SIGNATURE_LEN : 0));
         seen[st]++;
     }
 }

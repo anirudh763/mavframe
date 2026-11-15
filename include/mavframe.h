@@ -1,7 +1,17 @@
 /*
- * mavframe - a small MAVLink v2 frame parser with no heap allocation.
+ * mavframe - a small MAVLink v1/v2 frame parser with no heap allocation.
  *
- * Frame layout (MAVLink v2):
+ * MAVLink v1 layout:
+ *   0      STX (0xFE)
+ *   1      payload length (0..255)
+ *   2      sequence
+ *   3      system id
+ *   4      component id
+ *   5      message id (8 bit)
+ *   6..    payload
+ *   then   CRC-16/MCRF4XX, little endian, over bytes 1..5 + payload + CRC_EXTRA
+ *
+ * MAVLink v2 layout:
  *   0      STX (0xFD)
  *   1      payload length (0..255)
  *   2      incompat flags (0x01 = signed)
@@ -46,7 +56,9 @@ extern "C" {
 #define MAVFRAME_VERSION_STRING "0.1.0"
 
 #define MAVFRAME_STX 0xFD
+#define MAVFRAME_V1_STX 0xFE
 #define MAVFRAME_HEADER_LEN 10
+#define MAVFRAME_V1_HEADER_LEN 6
 #define MAVFRAME_MAX_PAYLOAD 255
 #define MAVFRAME_CRC_LEN 2
 #define MAVFRAME_SIGNATURE_LEN 13
@@ -113,19 +125,40 @@ int mavframe_crc_extra(uint32_t msgid, uint8_t *extra);
  * flush call. The pointers point into the parser's own buffer. */
 static inline const uint8_t *mavframe_raw(const mavframe_parser *p) { return p->buf + p->head; }
 static inline uint8_t mavframe_payload_len(const mavframe_parser *p) { return mavframe_raw(p)[1]; }
-static inline uint8_t mavframe_incompat_flags(const mavframe_parser *p) { return mavframe_raw(p)[2]; }
-static inline uint8_t mavframe_compat_flags(const mavframe_parser *p) { return mavframe_raw(p)[3]; }
-static inline uint8_t mavframe_seq(const mavframe_parser *p) { return mavframe_raw(p)[4]; }
-static inline uint8_t mavframe_sysid(const mavframe_parser *p) { return mavframe_raw(p)[5]; }
-static inline uint8_t mavframe_compid(const mavframe_parser *p) { return mavframe_raw(p)[6]; }
+static inline uint8_t mavframe_version(const mavframe_parser *p) { return mavframe_raw(p)[0] == MAVFRAME_V1_STX ? 1 : 2; }
+static inline uint8_t mavframe_header_len(const mavframe_parser *p)
+{
+    return mavframe_version(p) == 1 ? MAVFRAME_V1_HEADER_LEN : MAVFRAME_HEADER_LEN;
+}
+static inline uint8_t mavframe_incompat_flags(const mavframe_parser *p)
+{
+    return mavframe_version(p) == 1 ? 0 : mavframe_raw(p)[2];
+}
+static inline uint8_t mavframe_compat_flags(const mavframe_parser *p)
+{
+    return mavframe_version(p) == 1 ? 0 : mavframe_raw(p)[3];
+}
+static inline uint8_t mavframe_seq(const mavframe_parser *p)
+{
+    return mavframe_raw(p)[mavframe_version(p) == 1 ? 2 : 4];
+}
+static inline uint8_t mavframe_sysid(const mavframe_parser *p)
+{
+    return mavframe_raw(p)[mavframe_version(p) == 1 ? 3 : 5];
+}
+static inline uint8_t mavframe_compid(const mavframe_parser *p)
+{
+    return mavframe_raw(p)[mavframe_version(p) == 1 ? 4 : 6];
+}
 static inline uint32_t mavframe_msgid(const mavframe_parser *p)
 {
     const uint8_t *b = mavframe_raw(p);
-    return (uint32_t)b[7] | ((uint32_t)b[8] << 8) | ((uint32_t)b[9] << 16);
+    return mavframe_version(p) == 1 ? b[5]
+                                    : (uint32_t)b[7] | ((uint32_t)b[8] << 8) | ((uint32_t)b[9] << 16);
 }
 static inline const uint8_t *mavframe_payload(const mavframe_parser *p)
 {
-    return mavframe_raw(p) + MAVFRAME_HEADER_LEN;
+    return mavframe_raw(p) + mavframe_header_len(p);
 }
 static inline int mavframe_signed(const mavframe_parser *p)
 {
@@ -142,7 +175,7 @@ static inline const uint8_t *mavframe_signature(const mavframe_parser *p)
 /* Total length of the current frame in bytes, including signature. */
 static inline uint16_t mavframe_frame_len(const mavframe_parser *p)
 {
-    return (uint16_t)(MAVFRAME_HEADER_LEN + mavframe_payload_len(p) + MAVFRAME_CRC_LEN +
+    return (uint16_t)(mavframe_header_len(p) + mavframe_payload_len(p) + MAVFRAME_CRC_LEN +
                       (mavframe_signed(p) ? MAVFRAME_SIGNATURE_LEN : 0));
 }
 /* Bytes held in the buffer, including the frame just reported. The stream

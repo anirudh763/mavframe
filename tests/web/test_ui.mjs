@@ -27,7 +27,7 @@ let base;
 let browser;
 before(async () => {
   ({ server, base } = await startServer());
-  browser = await chromium.launch();
+  browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 });
 after(async () => {
   await browser?.close();
@@ -43,7 +43,11 @@ async function holdSample(page) {
   let release;
   const gate = new Promise((ok) => { release = ok; });
   let requested;
-  const seen = new Promise((ok) => { requested = ok; });
+  const seen = new Promise((ok, fail) => {
+    const timer = setTimeout(() => { release(); fail(new Error('The controlled sample request was not observed within 10 seconds.')); }, 10000);
+    timer.unref();
+    requested = () => { clearTimeout(timer); ok(); };
+  });
   await page.route("**/sample/sample-flight.tlog", async (r) => { requested(); await gate; await r.continue(); });
   return { seen, release: () => release() };
 }
@@ -78,7 +82,8 @@ test("Load engineering sample shows the generator's exact counts and per-sender 
   const hb = await page.textContent("#msg-table tbody tr:first-child");
   assert.match(hb, /1:1 at 1\.00 Hz/);
   assert.match(hb, /255:190 at 1\.00 Hz/);
-  assert.match(hb, /2\.00 all/);
+  assert.match(hb, /2:191 at n\/a Hz/);
+  assert.match(hb, /2\.02 all/);
   // The external link must not replace the loaded capture.
   assert.equal(await page.getAttribute("#gap-assumptions a", "target"), "_blank");
   assert.match(await page.getAttribute("#gap-assumptions a", "rel"), /noopener/);
@@ -243,7 +248,7 @@ test("error and empty states: empty file, not a MAVLink file, oversized file, ne
   const bad = path.join(CASES, "notes.txt");
   fs.writeFileSync(bad, "This is a text file, not telemetry.\n".repeat(200));
   await upload(page, bad);
-  await page.waitForFunction(() => /No MAVLink v2 frames found in notes.txt/.test(document.getElementById("status").textContent));
+  await page.waitForFunction(() => /No supported MAVLink frames found in notes.txt/.test(document.getElementById("status").textContent));
   assert.equal(await metric(page, "m-frames"), "0");
   await goFrames(page);
   assert.match(await page.textContent("#frame-table tbody"), /No frames to show/);

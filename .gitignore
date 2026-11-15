@@ -9,3 +9,7 @@ corpus/
 __pycache__/
 .pytest_cache/
 node_modules/
+# Local secrets/configuration. Keep the checked-in examples visible.
+.env
+.env.*
+!.env.example

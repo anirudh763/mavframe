@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Generate src/mavframe_crc_extra_common.h from pymavlink.
+"""Generate the common + ardupilotmega CRC_EXTRA lookup table offline.
 
-Usage (from the repository root):
-    pip install pymavlink
-    python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
+Usage: python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h
 """
+import sys
+
 import pymavlink
-from pymavlink.dialects.v20 import common
+
+from fetch_mavlink_xml import COMMIT, load_graph, load_pymavlink_dialect
 
 
 def main():
-    entries = sorted((msgid, cls.crc_extra, cls.msgname) for msgid, cls in common.mavlink_map.items())
+    graph = load_graph()
+    mav = load_pymavlink_dialect()
+    xml_messages = {int(m.get("id")): m.get("name") for root in graph.values() for m in root.iter("message")}
+    entries = sorted((msgid, cls.crc_extra, cls.msgname) for msgid, cls in mav.mavlink_map.items())
+    if {msgid: name for msgid, _, name in entries} != xml_messages:
+        sys.exit("pymavlink ardupilotmega message set differs from pinned XML at %s" % COMMIT)
+
     print("/*")
     print(" * GENERATED FILE, do not edit.")
-    print(" * CRC_EXTRA values for the MAVLink 'common' dialect, taken from")
-    print(" * pymavlink %s (pymavlink.dialects.v20.common)." % pymavlink.__version__)
-    print(" * Regenerate with:")
-    print(" *     python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h")
+    print(" * CRC_EXTRA values for common + ardupilotmega, cross-checked against")
+    print(" * pinned MAVLink XML commit %s and pymavlink %s." % (COMMIT, pymavlink.__version__))
+    print(" * Regenerate with: python3 tools/gen_crc_extra.py > src/mavframe_crc_extra_common.h")
     print(" * Each entry is (msgid << 8) | crc_extra, sorted by msgid for binary search.")
     print(" */")
     print("#ifndef MAVFRAME_CRC_EXTRA_COMMON_H")

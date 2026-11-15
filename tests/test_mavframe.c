@@ -18,7 +18,7 @@ static int checks;
 
 #define MSG_HEARTBEAT 0u     /* CRC_EXTRA 50 */
 #define MSG_ATTITUDE 30u     /* CRC_EXTRA 39 */
-#define MSG_UNKNOWN 3u       /* not in the common dialect table */
+#define MSG_UNKNOWN 3u       /* not in the pinned common + ardupilotmega dialects */
 
 /* Build a v2 frame into out (at least MAVFRAME_MAX_FRAME bytes). Returns its length. */
 static size_t build(uint8_t *out, uint32_t msgid, uint8_t seq, const uint8_t *payload, uint8_t len,
@@ -54,11 +54,35 @@ static size_t build(uint8_t *out, uint32_t msgid, uint8_t seq, const uint8_t *pa
     return n;
 }
 
+/* Build a v1 frame; the one-byte message id limits v1 to ids below 256. */
+static size_t build_v1(uint8_t *out, uint32_t msgid, uint8_t seq, const uint8_t *payload, uint8_t len)
+{
+    uint8_t extra = 0;
+    uint16_t crc;
+    size_t n = MAVFRAME_V1_HEADER_LEN;
+
+    out[0] = MAVFRAME_V1_STX;
+    out[1] = len;
+    out[2] = seq;
+    out[3] = 42;
+    out[4] = 7;
+    out[5] = (uint8_t)msgid;
+    if (len)
+        memcpy(out + n, payload, len);
+    n += len;
+    (void)mavframe_crc_extra(msgid, &extra);
+    crc = mavframe_crc16(MAVFRAME_CRC_INIT, out + 1, n - 1);
+    crc = mavframe_crc16(crc, &extra, 1);
+    out[n++] = (uint8_t)crc;
+    out[n++] = (uint8_t)(crc >> 8);
+    return n;
+}
+
 /* A recorded event: status plus, for frames, the fields we compare. */
 typedef struct {
     mavframe_status st;
     uint32_t msgid;
-    uint8_t seq, len;
+    uint8_t seq, len, version;
     uint16_t payload_sum;
 } event;
 
@@ -72,6 +96,7 @@ static void record(event *ev, size_t *n, const mavframe_parser *p, mavframe_stat
     if (st == MAVFRAME_FRAME) {
         unsigned i;
         e.msgid = mavframe_msgid(p);
+        e.version = mavframe_version(p);
         e.seq = mavframe_seq(p);
         e.len = mavframe_payload_len(p);
         for (i = 0; i < e.len; i++)
@@ -156,6 +181,7 @@ static void test_crc_extra_table(void)
     uint8_t extra = 0;
     CHECK(mavframe_crc_extra(MSG_HEARTBEAT, &extra) && extra == 50);
     CHECK(mavframe_crc_extra(MSG_ATTITUDE, &extra) && extra == 39);
+    CHECK(mavframe_crc_extra(152, &extra) && extra == 208); /* ArduPilot MEMINFO */
     CHECK(!mavframe_crc_extra(MSG_UNKNOWN, &extra));
     CHECK(!mavframe_crc_extra(0xFFFFFFu, &extra));
 }
@@ -183,6 +209,46 @@ static void test_heartbeat_fields(void)
     CHECK(mavframe_frame_len(&p) == sizeof(hb));
     CHECK(mavframe_poll(&p) == MAVFRAME_NEED_MORE);
     CHECK(mavframe_pending(&p) == 0);
+}
+
+static void test_v1_and_mixed_stream(void)
+{
+    static const uint8_t golden[] = {0xFE, 0x09, 0x07, 0x01, 0x01, 0x00, 0x04, 0x00, 0x00,
+                                     0x00, 0x00, 0x02, 0x03, 0x03, 0x03, 0x11, 0x7E};
+    uint8_t v1[MAVFRAME_MAX_FRAME], v2[MAVFRAME_MAX_FRAME], mixed[2 * MAVFRAME_MAX_FRAME];
+    uint8_t payload[9] = {0xFD, 0, 0, 0, 2, 3, 3, 3, 0};
+    size_t n1 = build_v1(v1, MSG_HEARTBEAT, 8, payload, sizeof(payload));
+    size_t n2 = build(v2, MSG_HEARTBEAT, 9, payload, sizeof(payload), 0);
+    size_t n, n_chunk, chunks[] = {1, 2, 5, 6, 10, 17, sizeof(mixed)}, i;
+
+    CHECK(sizeof(golden) == 17);
+    mavframe_init(&p);
+    for (n = 0; n + 1 < sizeof(golden); n++)
+        CHECK(mavframe_feed_byte(&p, golden[n]) == MAVFRAME_NEED_MORE);
+    CHECK(mavframe_feed_byte(&p, golden[sizeof(golden) - 1]) == MAVFRAME_FRAME);
+    CHECK(mavframe_version(&p) == 1 && mavframe_header_len(&p) == MAVFRAME_V1_HEADER_LEN);
+    CHECK(mavframe_msgid(&p) == MSG_HEARTBEAT && mavframe_seq(&p) == 7);
+    CHECK(mavframe_sysid(&p) == 1 && mavframe_compid(&p) == 1);
+    CHECK(mavframe_payload_len(&p) == 9 && memcmp(mavframe_payload(&p), golden + 6, 9) == 0);
+    CHECK(mavframe_incompat_flags(&p) == 0 && mavframe_compat_flags(&p) == 0);
+    CHECK(!mavframe_signed(&p) && mavframe_signature(&p) == NULL && mavframe_frame_len(&p) == sizeof(golden));
+
+    memcpy(mixed, v1, n1);
+    memcpy(mixed + n1, v2, n2);
+    n = run_bytes(&p, mixed, n1 + n2, ev, 1);
+    CHECK(n == 2 && ev[0].st == MAVFRAME_FRAME && ev[1].st == MAVFRAME_FRAME);
+    CHECK(ev[0].version == 1 && ev[0].msgid == MSG_HEARTBEAT && ev[0].seq == 8);
+    CHECK(ev[1].version == 2 && ev[1].msgid == MSG_HEARTBEAT && ev[1].seq == 9);
+    CHECK(p.stats.frames == 2 && p.stats.bad_crc == 0 && p.stats.dropped_bytes == 0);
+    for (i = 0; i < sizeof(chunks) / sizeof(chunks[0]); i++) {
+        n_chunk = run_chunks(&p, mixed, n1 + n2, chunks[i], ev2, 1);
+        CHECK(n_chunk == n && memcmp(ev, ev2, n * sizeof(ev[0])) == 0);
+        CHECK(p.stats.frames == 2 && p.stats.bad_crc == 0 && p.stats.dropped_bytes == 0);
+    }
+
+    v1[n1 - 1] ^= 1;
+    n = run_bytes(&p, v1, n1, ev, 1);
+    CHECK(count(ev, n, MAVFRAME_BAD_CRC) == 1 && p.stats.bad_crc == 1);
 }
 
 static void test_zero_length_payload(void)
@@ -441,6 +507,12 @@ static void test_unknown_msgid(void)
     CHECK(count(ev, n, MAVFRAME_UNKNOWN_MSGID) == 1);
     CHECK(count(ev, n, MAVFRAME_FRAME) == 1 && ev[n - 1].seq == 9);
     CHECK(p.stats.unknown_msgid == 1 && p.stats.frames == 1 && p.stats.dropped_bytes == len);
+
+    len = build_v1(f, MSG_UNKNOWN, 10, payload, sizeof(payload));
+    n = run_bytes(&p, f, len, ev, 1);
+    CHECK(count(ev, n, MAVFRAME_UNKNOWN_MSGID) == 1);
+    CHECK(count(ev, n, MAVFRAME_BAD_CRC) == 0 && p.stats.bad_crc == 0);
+    CHECK(p.stats.unknown_msgid == 1 && p.stats.frames == 0);
 }
 
 static void test_unpolled_events_are_safe(void)
@@ -520,6 +592,7 @@ int main(void)
     test_crc_known_answer();
     test_crc_extra_table();
     test_heartbeat_fields();
+    test_v1_and_mixed_stream();
     test_zero_length_payload();
     test_max_payload();
     test_v2_trimmed_payload();

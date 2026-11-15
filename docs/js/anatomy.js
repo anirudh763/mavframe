@@ -11,7 +11,7 @@ export const msgLabel = (id) => messageName(id) || `id ${id}`;
 // is cut short, computed null when the message id has no CRC_EXTRA.
 export function crcOf(bytes, parser, off) {
   const plen = bytes[off + 1];
-  const c = off + 10 + plen;
+  const c = off + (bytes[off] === 0xfe ? 6 : 10) + plen;
   if (c + 2 > bytes.length) return null;
   const wire = bytes[c] | (bytes[c + 1] << 8);
   const computed = parser.crc(bytes.subarray(off, c + 2));
@@ -22,9 +22,11 @@ export function anatomy(result, bytes, parser, info) {
   const off = info.off;
   const b = bytes;
   const plen = b[off + 1];
-  const iflags = b[off + 2];
+  const version = b[off] === 0xfe ? 1 : 2;
+  const hlen = version === 1 ? 6 : 10;
+  const iflags = version === 1 ? 0 : b[off + 2];
   const signed = (iflags & 1) === 1;
-  const msgid = b[off + 7] | (b[off + 8] << 8) | (b[off + 9] << 16);
+  const msgid = version === 1 ? b[off + 5] : b[off + 7] | (b[off + 8] << 8) | (b[off + 9] << 16);
   const end = Math.min(bytes.length, off + info.flen);
   const groups = [];
   const F = (key, name, from, to, value, reading = "", units = "") => ({ key, name, from, to: Math.min(to, end), value, reading, units });
@@ -36,36 +38,34 @@ export function anatomy(result, bytes, parser, info) {
     groups.push({ id: "ts", title: "tlog record", fields: [F("ts", "tlog timestamp", off - 8, off, `${us} µs`, iso)] });
   }
   groups.push({ id: "header", title: "Header", fields: [
-    F("stx", "Start byte", off, off + 1, hexN(b[off], 2), "MAVLink v2"),
+    F("stx", "Start byte", off, off + 1, hexN(b[off], 2), `MAVLink v${version}`),
     F("len", "Payload length", off + 1, off + 2, String(plen), "bytes"),
-    F("incompat", "Incompat flags", off + 2, off + 3, hexN(iflags, 2), signed ? "signature present; not verified" : ""),
-    F("compat", "Compat flags", off + 3, off + 4, hexN(b[off + 3], 2)),
-    F("seq", "Sequence", off + 4, off + 5, String(b[off + 4])),
-    F("sysid", "System ID", off + 5, off + 6, String(b[off + 5])),
-    F("compid", "Component ID", off + 6, off + 7, String(b[off + 6])),
-    F("msgid", "Message ID", off + 7, off + 10, String(msgid), msgLabel(msgid)),
+    ...(version === 2 ? [F("incompat", "Incompat flags", off + 2, off + 3, hexN(iflags, 2), signed ? "signature present; not verified" : ""), F("compat", "Compat flags", off + 3, off + 4, hexN(b[off + 3], 2))] : []),
+    F("seq", "Sequence", off + (version === 1 ? 2 : 4), off + (version === 1 ? 3 : 5), String(info.seq)),
+    F("sysid", "System ID", off + (version === 1 ? 3 : 5), off + (version === 1 ? 4 : 6), String(info.sysid)),
+    F("compid", "Component ID", off + (version === 1 ? 4 : 6), off + (version === 1 ? 5 : 7), String(info.compid)),
+    F("msgid", "Message ID", off + (version === 1 ? 5 : 7), off + hlen, String(msgid), msgLabel(msgid)),
   ] });
 
-  const p0 = off + 10;
+  const p0 = off + hlen;
   const payload = b.subarray(p0, Math.min(p0 + plen, end));
   let decoded = null;
-  if (info.check === "valid") decoded = decodePayload(msgid, payload);
+  if (info.check === "valid") decoded = decodePayload(msgid, payload, version);
   if (decoded) {
     const fields = decoded.fields.map((f) => {
       const size = { uint8_t: 1, int8_t: 1, char: 1, uint16_t: 2, int16_t: 2, uint32_t: 4, int32_t: 4, float: 4, uint64_t: 8, int64_t: 8, double: 8 }[f.type];
-      const from = p0 + f.offset;
-      const to = from + size * (f.count || 1);
+      const from = Math.min(p0 + plen, p0 + f.offset);
+      const to = p0 + f.offset + size * (f.count || 1);
       // MAVLink v2 trims trailing zero bytes; such a field was not sent.
-      const sent = f.offset < plen;
       return { ...F(`p.${f.name}`, f.name + (f.ext ? " (extension)" : ""), from, Math.min(to, p0 + plen), formatValue(f.value), f.meaning || "", f.units || ""),
-        trimmed: !sent };
+        trimmed: f.zeroFilled, wireBytes: f.wireBytes };
     });
     groups.push({ id: "payload", title: `Payload: ${decoded.name}`, description: decoded.description, trimmed: decoded.trimmed, length: decoded.length, fields });
   } else {
     const why = info.check === "crc" ? "not decoded: the checksum failed, so field values may be corrupt"
-      : info.check === "unsupported" ? `not decoded: message id ${msgid} is not in the common dialect`
+      : info.check === "unsupported" ? `not decoded: message id ${msgid} is not in the pinned common/ArduPilot dialects`
         : info.check === "reject" ? "not decoded: unsupported incompat flags"
-          : "fields are decoded only for HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD";
+          : "no supported field definition for this message id";
     groups.push({ id: "payload", title: "Payload", fields: plen ? [F("payload", "Payload bytes", p0, p0 + plen, `${plen} bytes`, why)] : [], note: why });
   }
 
@@ -82,6 +82,6 @@ export function anatomy(result, bytes, parser, info) {
       ] });
     }
   }
-  return { off, end, start: groups[0].id === "ts" ? off - 8 : off, plen, msgid, signed, crc, groups,
+  return { off, end, version, hlen, start: groups[0].id === "ts" ? off - 8 : off, plen, msgid, signed, crc, groups,
     fields: groups.flatMap((g) => g.fields) };
 }

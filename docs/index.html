@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Capture – Mavframe</title>
-<meta name="description" content="Inspect MAVLink v2 telemetry captures (.tlog or raw bytes) in the browser with the mavframe C parser compiled to WebAssembly. Files never leave your machine.">
+<meta name="description" content="Inspect mixed MAVLink v1/v2 telemetry, decode pinned common/ArduPilot messages and export link diagnostics locally with the real C/Wasm parser.">
 <meta name="theme-color" content="#f6f5f2">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -22,7 +22,7 @@
    <div class="rail-inner">
     <div class="wordmark">
       <a class="brand" href="#/capture">Mavframe</a>
-      <p class="purpose">MAVLink v2 packet bench</p>
+      <p class="purpose">MAVLink packet bench</p>
     </div>
     <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
     <nav aria-label="Main" class="nav">
@@ -55,7 +55,7 @@
       <!-- Capture -->
       <section id="screen-capture" class="screen" aria-labelledby="h-capture">
         <h1 id="h-capture" tabindex="-1">Capture</h1>
-        <p class="lede">Open a MAVLink v2 capture (.tlog or a raw byte stream). It is parsed in this tab by the project's C parser compiled to WebAssembly; nothing is uploaded.</p>
+        <p class="lede">Inspect mixed MAVLink v1/v2 captures with the real C/Wasm parser and pinned common/ArduPilot field definitions. Files stay on this device.</p>
         <div class="toolbar" role="group" aria-label="Load a capture">
           <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
           <label for="file" class="btn primary">Open capture file</label>
@@ -75,6 +75,33 @@
           <span id="progress-text" class="muted" hidden></span>
           <button type="button" class="btn" id="cancel" hidden>Cancel</button>
         </div>
+        <p id="offline-status" class="muted small" role="status">The inspector works locally. Preparing offline assets…</p>
+        <details class="box capture-tool" id="live-panel">
+          <summary>Live radio</summary>
+          <p>Read a user-selected USB telemetry radio through the same C/Wasm parser. This tool never writes commands to the radio or uploads telemetry. Arrival timing is measured per browser read, not per device packet.</p>
+          <div class="toolbar">
+            <span class="field"><label for="serial-baud">Baud rate</label><select id="serial-baud"><option value="57600">57,600</option><option value="115200" selected>115,200</option><option value="230400">230,400</option><option value="460800">460,800</option><option value="921600">921,600</option></select></span>
+            <button type="button" class="btn primary" id="connect-radio">Connect radio</button>
+            <button type="button" class="btn" id="disconnect-radio" disabled>Disconnect radio</button>
+            <button type="button" class="btn" id="inspect-live" disabled>Stop and inspect retained bytes</button>
+          </div>
+          <p id="live-status" role="status" aria-live="polite">Checking Web Serial support…</p>
+          <dl class="metrics live-metrics">
+            <div><dt>Bytes received</dt><dd id="live-bytes">0</dd></div><div><dt>Valid frames</dt><dd id="live-frames">0</dd></div>
+            <div><dt>CRC candidates rejected</dt><dd id="live-crc">0</dd></div><div><dt>Sequence gaps</dt><dd id="live-gaps">0</dd></div>
+            <div><dt>Unknown messages</dt><dd id="live-unsupported">0</dd></div><div><dt>Rejected flags</dt><dd id="live-rejected">0</dd></div>
+            <div><dt>Retained bytes</dt><dd id="live-retained">0</dd></div><div><dt>Discarded history bytes</dt><dd id="live-discarded">0</dd></div>
+            <div><dt>Arrival rate</dt><dd id="live-rate">n/a</dd></div>
+          </dl>
+          <p class="muted small">Only the last 8 MiB can be inspected; counters cover up to 1 GiB or 30 minutes. Earlier bytes are discarded, not saved. A clean disconnect preserves the tail until a new session or page close; a failed parser may make it unavailable. Gaps are estimates and CRC candidates can include resynchronization noise. A contiguous unchecked custom-dialect header advances the sequence estimate without becoming a verified frame. Physical-radio validation is not yet recorded.</p>
+          <div class="table-wrap live-table" role="region" aria-label="Recent native parser events" tabindex="0"><table class="dense"><thead><tr><th scope="col">Offset</th><th scope="col">Sender</th><th scope="col">Message</th><th scope="col">Sequence</th><th scope="col">Result</th></tr></thead><tbody id="live-events"></tbody></table></div>
+        </details>
+        <details class="box capture-tool">
+          <summary>Native parser fuzz batch</summary>
+          <p>Run 1,000 deterministic valid, bit-flipped, truncated, empty and random-noise inputs against the compiled C parser in a separate worker. Your loaded capture is preserved.</p>
+          <div class="toolbar"><button type="button" class="btn" id="run-fuzz">Run 1,000 fuzz iterations</button><button type="button" class="btn" id="cancel-fuzz" disabled>Cancel fuzz batch</button></div>
+          <p id="fuzz-status" role="status" aria-live="polite">Load a capture with a valid frame to start. Seed: 0x5eed1234.</p>
+        </details>
         <div id="capture-result" hidden>
           <p id="source" class="source"></p>
           <h2 id="h-summary">Summary</h2>
@@ -93,6 +120,12 @@
             <li>Message signatures are shown as present but are not verified.</li>
           </ul>
           <p><a class="btn" id="view-frames" href="#/frames">View frames</a></p>
+          <div class="toolbar" role="group" aria-label="Export capture report">
+            <button type="button" class="btn" data-capture-export="json">Capture report (JSON)</button>
+            <button type="button" class="btn" data-capture-export="csv">Capture report (CSV)</button>
+            <button type="button" class="btn" data-capture-export="md">Capture report (Markdown)</button>
+          </div>
+          <p id="capture-export-status" class="muted small" role="status" aria-live="polite"></p>
           <h2 id="h-messages">Message types</h2>
           <div class="table-wrap" id="msg-region" role="region" aria-labelledby="h-messages" tabindex="0">
             <table id="msg-table" class="dense">
@@ -215,6 +248,7 @@
           <p id="field-status" class="sr-only" role="status" aria-live="polite"></p>
           <div class="export" role="group" aria-label="Export and step">
             <button type="button" class="btn primary" id="export-finding" aria-describedby="export-help">Export finding (JSON)</button>
+            <button type="button" class="btn" id="open-byte-editor">Mutate a copy</button>
             <label class="check" for="include-payload"><input type="checkbox" id="include-payload">Include all payloads (may contain GPS)</label>
             <span class="step">
               <button type="button" class="btn" id="prev-row">Previous row</button>
@@ -231,29 +265,30 @@
         <h1 id="h-help" tabindex="-1">Format help</h1>
         <p class="lede">What the inspector reads, how it decides a frame is good, and what it does not check.</p>
         <h2>What you can open</h2>
-        <p>A <strong>.tlog</strong> file (each record is an 8-byte big-endian microsecond timestamp followed by one frame, as written by ground stations) or a <strong>raw byte stream</strong> of MAVLink v2 frames. Auto-detect picks .tlog from the file name or from a plausible timestamp before the first start byte. Captures up to 256 MB are read in this tab; the details of the first 4,000,000 frames and 100,000 issues are listed, and the counts always cover the whole file.</p>
+        <p>A <strong>.tlog</strong> file (each record is an 8-byte big-endian microsecond timestamp followed by one frame, as written by ground stations) or a <strong>raw byte stream</strong> containing MAVLink v1, v2 or both. Auto-detect picks .tlog from the file name or a plausible initial timestamp. Captures up to 256 MiB are read in this tab; the first 4,000,000 frame details, 100,000 issue details and 100,000 sequence events are retained. Totals cover the whole file. Message/sender grouping is capped at 10,000 combinations and reports disclose truncation.</p>
         <h2>MAVLink v2 frame layout</h2>
         <div class="table-wrap" role="region" aria-labelledby="h-layout" tabindex="0">
           <table class="dense">
             <caption id="h-layout">Bytes of one MAVLink v2 frame</caption>
             <thead><tr><th scope="col">Bytes</th><th scope="col">Field</th><th scope="col">Notes</th></tr></thead>
             <tbody>
-              <tr><td class="mono">0</td><td>Start byte</td><td><code>0xFD</code> for v2 (v1 uses <code>0xFE</code> and is not parsed).</td></tr>
+              <tr><td class="mono">0</td><td>Start byte</td><td><code>0xFD</code> for v2. V1 uses <code>0xFE</code> and is parsed using its own six-byte header.</td></tr>
               <tr><td class="mono">1</td><td>Payload length</td><td>0 to 255. Trailing zero bytes of the payload may be trimmed by the sender.</td></tr>
               <tr><td class="mono">2</td><td>Incompat flags</td><td>Only bit 0 (signed) is supported; any other bit makes the frame a "bad flags" reject.</td></tr>
               <tr><td class="mono">3</td><td>Compat flags</td><td>Ignored.</td></tr>
               <tr><td class="mono">4</td><td>Sequence</td><td>8 bits per sender, wraps at 255.</td></tr>
               <tr><td class="mono">5–6</td><td>System ID, component ID</td><td>Shown as sys:comp.</td></tr>
               <tr><td class="mono">7–9</td><td>Message ID</td><td>24 bits, little-endian.</td></tr>
-              <tr><td class="mono">10…</td><td>Payload</td><td>Decoded for HEARTBEAT, SYS_STATUS, GPS_RAW_INT, ATTITUDE, GLOBAL_POSITION_INT and VFR_HUD from the official XML.</td></tr>
+              <tr><td class="mono">10…</td><td>Payload</td><td>326 pinned common/ArduPilot message definitions, including arrays, enums and v2 extensions. Reconstructed zero tails are labelled separately from wire bytes.</td></tr>
               <tr><td class="mono">+2</td><td>CRC</td><td>CRC-16/MCRF4XX over bytes 1 to the end of the payload plus the message's CRC_EXTRA byte.</td></tr>
               <tr><td class="mono">+13</td><td>Signature</td><td>Only when signed: link id, timestamp, hash.</td></tr>
             </tbody>
           </table>
         </div>
+        <p>V1 layout: start byte, payload length, sequence, system ID, component ID and one-byte message ID, followed by payload and two-byte CRC. V1 has no incompat/compat flags, extension fields or signature trailer. Both CRC calculations run in the native C engine.</p>
         <h2>CRC failed, unsupported, bad flags</h2>
         <p><strong>CRC failed</strong>: the header looked valid, but the checksum the parser computed does not match the two CRC bytes in the capture. The frame is discarded and the parser looks for the next start byte inside it, so a valid frame hidden in damaged bytes is still found. Frame details shows the wire and computed values side by side.</p>
-        <p><strong>Unsupported</strong>: the message id is not in the common dialect, so its CRC_EXTRA is unknown and the checksum cannot be checked. It may come from another dialect (such as ardupilotmega) or be noise. These are never counted as corrupt.</p>
+        <p><strong>Unsupported</strong>: the message id is outside the pinned common/ArduPilot definitions, so its CRC_EXTRA is unknown and the checksum cannot be checked. It may be a custom dialect or noise. These are never counted as corrupt. Full native candidate counters remain in capture reports; the .tlog presentation separately classifies timestamp artifacts and nested candidates.</p>
         <p><strong>Bad flags</strong>: incompat flags other than "signed", which this parser does not support.</p>
         <h2>Sequence gaps and the channel assumption</h2>
         <p>For each sender the step between sequence numbers is read as in order (1), duplicate (0), a gap (2 to 128: about step − 1 frames missing) or a step back (a late frame when small, otherwise a likely sender restart). A gap is an estimate: it assumes one fully observed channel per sender and in-order arrival. A late frame, a router that drops or filters messages, or two merged links look the same.</p>
@@ -265,6 +300,9 @@
         <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. All payload bytes are left out by default. The checkbox adds them when a full frame was retained; raw bytes may contain GPS/position or other sensitive data. Unsupported and bad-flags candidates retain only a header, so their payload and CRC are unavailable.</p>
         <h2>Privacy and licences</h2>
         <p>Files are read in this browser tab and never uploaded. Message definitions come from the official MAVLink XML (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">licence</a>).</p>
+        <h2>Custom dialects and team support</h2>
+        <p>The C library and inspector remain MIT licensed, including commercial use. Private dialect integration and team support would be separate services; they are not required to use this tool.</p>
+        <button type="button" class="btn" id="open-team-options">Commercial SDK &amp; support</button>
       </section>
 
       <!-- Not found -->
@@ -276,5 +314,27 @@
     </main>
   </div>
 </div>
+<dialog id="byte-editor-dialog" class="byte-editor-dialog" aria-labelledby="byte-editor-heading" aria-describedby="byte-editor-help">
+  <h2 id="byte-editor-heading">Mutate a copy</h2>
+  <div class="byte-editor">
+    <p id="byte-editor-help">Select a byte in the inspector or enter its absolute offset. A new copy runs through the C/Wasm parser; the original is retained.</p>
+    <div class="toolbar">
+      <span class="field"><label for="mutation-offset">Byte offset</label><input id="mutation-offset" type="number" min="0" step="1" value="0"></span>
+      <span class="field"><label for="mutation-mask">Bit to flip</label><select id="mutation-mask"><option value="1">Bit 0 (1)</option><option value="2">Bit 1 (2)</option><option value="4">Bit 2 (4)</option><option value="8">Bit 3 (8)</option><option value="16">Bit 4 (16)</option><option value="32">Bit 5 (32)</option><option value="64">Bit 6 (64)</option><option value="128">Bit 7 (128)</option></select></span>
+      <button type="button" class="btn" id="mutate-byte">Flip bit and check copy</button>
+      <button type="button" class="btn" id="restore-capture">Restore original capture</button>
+    </div>
+    <p id="mutation-status" class="small" role="status" aria-live="polite"></p>
+    <button type="button" class="btn" id="close-byte-editor">Close byte editor</button>
+  </div>
+</dialog>
+<dialog id="team-options-dialog" class="byte-editor-dialog" aria-labelledby="team-options-heading" aria-describedby="team-options-description">
+  <h2 id="team-options-heading">Custom dialect and team services</h2>
+  <p id="team-options-description">The open-source parser and inspector are available under MIT, with no paid commercial licence required.</p>
+  <p><strong>Proposed support: $49–$199 per engagement.</strong> Possible scope includes private XML code generation, CI fixtures and integration support. This is a pricing hypothesis, not an available subscription, certification or hosted private workspace.</p>
+  <p>No payment or email capture is active. You can prepare a public GitHub request to discuss scope; keep private XML, flight captures, credentials and personal contact details out of it.</p>
+  <p><a class="btn" id="team-request" href="https://github.com/anirudh763/mavframe/issues/new?title=Custom%20dialect%20support%20request&amp;body=Please%20describe%20the%20integration%20goal%20without%20private%20XML%2C%20flight%20data%20or%20credentials." target="_blank" rel="noopener noreferrer">Prepare public request</a></p>
+  <button type="button" class="btn" id="close-team-options">Close support options</button>
+</dialog>
 </body>
 </html>

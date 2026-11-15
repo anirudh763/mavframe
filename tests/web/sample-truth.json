@@ -1015,7 +1015,7 @@
  "duplicates": 0,
  "file": "docs/sample/sample-flight.tlog",
  "first_ts_us": 1767225600000121,
- "frames": 1496,
+ "frames": 1497,
  "gap_list": [
   {
    "compid": 1,
@@ -1046,7 +1046,7 @@
  "last_ts_us": 1767225659918601,
  "messages": {
   "0": {
-   "count": 120,
+   "count": 121,
    "crc_errors": 0,
    "name": "HEARTBEAT"
   },
@@ -1084,10 +1084,12 @@
  "missing_frames": 4,
  "pymavlink_tlog_reader": {
   "bad_data_pieces": 3,
+  "valid_frames": 1497,
+  "valid_v1_frames": 1,
   "valid_v2_frames": 1496
  },
  "records": 1500,
  "reorders": 0,
- "skipped_bytes": 160,
+ "skipped_bytes": 135,
  "v1_records": 1
 }

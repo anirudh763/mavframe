@@ -1,16 +1,18 @@
 MAVLink message definitions: licence notice
 
-tools/mavlink-xml/common-excerpt.xml is an excerpt of common.xml, standard.xml
-and minimal.xml from https://github.com/mavlink/mavlink at commit
-12c898d88ce18d24e8caf6338596e98c5005bc97
-(message_definitions/v1.0). docs/js/msgdefs.js is generated from that excerpt.
+The XML files in tools/mavlink-xml/ are the checksum-pinned common and
+ardupilotmega dialects and their complete include graph from
+https://github.com/mavlink/mavlink at commit
+12c898d88ce18d24e8caf6338596e98c5005bc97 (message_definitions/v1.0).
+`SHA256SUMS` and `tools/fetch_mavlink_xml.py` record the source hashes.
+`docs/js/msgdefs.js` and `src/mavframe_crc_extra_common.h` are generated from
+these definitions and cross-checked with pymavlink 2.4.50.
 
 MAVLink states that "the message definition XML files and the generated
 C-language version of MAVLink are made available under the MIT-licence"
 (https://mavlink.io/en/#license). The MAVLink repository's COPYING file at that
-commit gives the MIT permission notice below. The MAVLink generator itself
-(LGPL-3.0) is not included in this repository; pymavlink is used only as a
-test and build-time dependency.
+commit gives the MIT permission notice below. Pymavlink's generator is used
+only at build time to cross-check the XML definitions.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of the generated software (the "Generated Software"), to deal

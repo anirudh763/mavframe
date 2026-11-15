@@ -36,18 +36,23 @@ static void on_event(run *r, const mavframe_parser *p, mavframe_status st)
         size_t off = r->fed - mavframe_pending(p);
         uint16_t flen = mavframe_frame_len(p);
         uint8_t len = mavframe_payload_len(p);
+        uint8_t version = mavframe_version(p);
+        uint8_t header = mavframe_header_len(p);
         const uint8_t *raw = mavframe_raw(p);
         uint8_t extra;
         uint16_t crc;
 
         REQUIRE(mavframe_pending(p) >= flen);
         REQUIRE(memcmp(raw, r->data + off, flen) == 0);
-        REQUIRE(raw[0] == MAVFRAME_STX);
+        REQUIRE(version == 1 || version == 2);
+        REQUIRE(header == (version == 1 ? MAVFRAME_V1_HEADER_LEN : MAVFRAME_HEADER_LEN));
+        REQUIRE(raw[0] == (version == 1 ? MAVFRAME_V1_STX : MAVFRAME_STX));
         REQUIRE((mavframe_incompat_flags(p) & ~MAVFRAME_IFLAG_SIGNED) == 0);
+        REQUIRE(version == 2 || (mavframe_incompat_flags(p) == 0 && !mavframe_signed(p)));
         REQUIRE(mavframe_crc_extra(mavframe_msgid(p), &extra));
-        crc = mavframe_crc16(MAVFRAME_CRC_INIT, raw + 1, (size_t)9 + len);
+        crc = mavframe_crc16(MAVFRAME_CRC_INIT, raw + 1, (size_t)header - 1 + len);
         crc = mavframe_crc16(crc, &extra, 1);
-        REQUIRE(raw[10 + len] == (crc & 0xFF) && raw[11 + len] == (crc >> 8));
+        REQUIRE(raw[header + len] == (crc & 0xFF) && raw[header + len + 1] == (crc >> 8));
         REQUIRE((mavframe_signature(p) != NULL) == mavframe_signed(p));
         r->frame_bytes += flen;
         r->hash = r->hash * 1099511628211ULL + off;

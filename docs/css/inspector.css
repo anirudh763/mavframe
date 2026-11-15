@@ -9,6 +9,21 @@ h3 { font-size: 1rem; margin: 16px 0 8px; }
 p { margin: 0 0 16px; }
 .lede { color: var(--muted); max-width: 72ch; }
 .num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.capture-tool { margin: 16px 0; padding: 0 16px 16px; }
+.capture-tool > summary, .byte-editor > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 700; }
+.capture-tool > summary::before, .byte-editor > summary::before { content: '+'; width: 20px; flex: 0 0 20px; }
+.capture-tool[open] > summary::before, .byte-editor[open] > summary::before { content: '−'; }
+.capture-tool p, .capture-tool dd { overflow-wrap: anywhere; }
+.live-table { min-height: 44px; max-height: 320px; }
+.live-table td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.byte-editor { margin-top: 16px; }
+.byte-editor-dialog { width: min(620px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 24px; overflow: auto; background: var(--surface); color: var(--ink); border: 1px solid var(--input); border-radius: var(--radius); }
+.byte-editor-dialog::backdrop { background: rgb(0 0 0 / 35%); }
+.byte-editor .toolbar { align-items: end; }
+.byte-editor input { width: 140px; max-width: 100%; min-height: 44px; padding: 8px; border: 1px solid var(--input); border-radius: var(--radius); background: var(--surface); color: var(--ink); font: inherit; font-variant-numeric: tabular-nums; }
+.nav a { gap: 8px; }
+.nav-icon { width: 18px; height: 18px; flex: 0 0 18px; }
+@media (max-width: 480px) { .capture-tool { padding: 0 8px 12px; } .capture-tool .toolbar { align-items: stretch; } .capture-tool .toolbar .btn { flex: 1 1 100%; } .byte-editor .field { width: 100%; } .byte-editor input, .byte-editor select { width: 100%; } }
 .mono, td.mono { font-family: var(--mono); font-size: .875rem; }
 
 /* ---------- horizontal commands and location ---------- */
@@ -232,6 +247,7 @@ body.analyzer-mode #panel-bytes .hex { margin: 4px 0 0; border: 0; padding: 4px 
 body.analyzer-mode #hex-help { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 body.analyzer-mode .tree h3 { margin: 6px 0 4px; }
 body.analyzer-mode .export { margin-top: 4px; padding-top: 4px; }
+body.analyzer-mode .export .check { flex: 1 1 200px; }
 body.analyzer-mode .note { margin: 8px 0; }
 body.analyzer-mode .step { display: none; }
 body.analyzer-mode .tree table.dense td { padding-top: 0; padding-bottom: 0; vertical-align: middle; }

@@ -38,9 +38,11 @@ export function wrapParser(instance) {
     crc(frame) {
       const plen = frame[1];
       const scratch = new Uint8Array(mem.buffer, x.mfw_scratch(), 280);
-      const n = Math.min(9 + plen, frame.length - 1, 279);
+      const hlen = frame[0] === 0xfe ? 6 : 10;
+      if (frame.length < hlen + plen + 2) return null;
+      const n = hlen - 1 + plen;
       scratch.set(frame.subarray(1, 1 + n), 0);
-      const msgid = frame[7] | (frame[8] << 8) | (frame[9] << 16);
+      const msgid = hlen === 6 ? frame[5] : frame[7] | (frame[8] << 8) | (frame[9] << 16);
       if (!x.mavframe_crc_extra(msgid, x.mfw_scratch() + 279)) return null;
       let crc = x.mavframe_crc16(0xffff, x.mfw_scratch(), n);
       crc = x.mavframe_crc16(crc, x.mfw_scratch() + 279, 1);
@@ -169,11 +171,17 @@ export async function analyze(bytes, opts = {}) {
   // tab's memory.
   const maxIssues = opts.maxIssues ?? MAX_LISTED_ISSUES;
   const issues = []; // {kind, off, msgid, sysid, compid, seq, ts, frame, ...}
+  const sequenceTimeline = [];
+  let unlistedSequenceEvents = 0;
   const counts = { crc: 0, unsupported: 0, reject: 0, gap: 0, duplicate: 0, reorder: 0 };
   let missingFrames = 0;
   let unlisted = 0;
   const pending = []; // .tlog: rejections that may still turn out to be timestamp bytes
   const messages = new Map();
+  const senders = new Map();
+  const MAX_SOURCE_GROUPS = 10000;
+  let sourceGroups = 0;
+  let sourceGroupsTruncated = false;
   const lastSeq = new Int16Array(65536).fill(-1);
   let timestampArtifacts = 0;
   let insideFailedFrame = 0;
@@ -183,7 +191,16 @@ export async function analyze(bytes, opts = {}) {
   let unsupStart = -1;
   let unsupEnd = -1;
   let framesWithTs = 0;
+  let firstCaptureTs = NaN;
+  let timestampReversals = 0;
   let lastTs = NaN;
+
+  function senderEntry(sysid, compid) {
+    const key = (sysid << 8) | compid;
+    let s = senders.get(key);
+    if (!s) senders.set(key, (s = { sysid, compid, frames: 0, crcErrors: 0, gaps: 0, missing: 0, duplicates: 0, reorders: 0, firstTs: NaN, lastTs: NaN }));
+    return s;
+  }
 
   function msgEntry(id) {
     let m = messages.get(id);
@@ -204,6 +221,17 @@ export async function analyze(bytes, opts = {}) {
     counts[it.kind]++;
     if (it.kind === "crc") msgEntry(it.msgid).crcErrors++;
     if (it.kind === "gap") missingFrames += it.missing;
+    if (["gap", "duplicate", "reorder"].includes(it.kind)) {
+      if (sequenceTimeline.length < MAX_LISTED_ISSUES) sequenceTimeline.push(it);
+      else unlistedSequenceEvents++;
+    }
+    if (["crc", "gap", "duplicate", "reorder"].includes(it.kind)) {
+      const s = senderEntry(it.sysid, it.compid);
+      if (it.kind === "crc") s.crcErrors++;
+      if (it.kind === "gap") { s.gaps++; s.missing += it.missing; }
+      if (it.kind === "duplicate") s.duplicates++;
+      if (it.kind === "reorder") s.reorders++;
+    }
     if (listable && issues.length < maxIssues) issues.push(it);
     else unlisted++;
   }
@@ -223,6 +251,13 @@ export async function analyze(bytes, opts = {}) {
         const it = { kind, status: e.status, off: e.off,
           msgid: e.msgid, sysid: e.sysid, compid: e.compid, seq: e.seq, len: e.len, flen: e.flen, iflags: e.iflags,
           ts: Number.isNaN(own) ? lastTs : own, frame: n };
+        if (tlog && kind === "crc" && !Number.isNaN(own)) {
+          // A candidate inside this record's timestamp must not hide its actual bad frame.
+          for (let k = pending.length - 1; k >= 0; k--) {
+            if (pending[k].off >= e.off - 8) { pending.splice(k, 1); timestampArtifacts++; }
+          }
+          if (failedStart >= e.off - 8 && failedStart < e.off) failedStart = failedEnd = -1;
+        }
         // After a CRC failure the parser rescans that frame's bytes for
         // another 0xFD. Candidates it rejects there are pieces of the damaged
         // frame, already reported as one CRC error, not separate issues. This
@@ -242,7 +277,7 @@ export async function analyze(bytes, opts = {}) {
         if (kind === "reject" && e.off > unsupStart && e.off < unsupEnd) { insideFailedFrame++; continue; }
         if (kind === "unsupported") {
           unsupStart = e.off;
-          unsupEnd = e.off + 12 + e.len + (e.iflags & 1 ? 13 : 0);
+          unsupEnd = e.off + (bytes[e.off] === 0xfe ? 8 : 12) + e.len + (e.iflags & 1 ? 13 : 0);
           // Frames of other dialects use up sequence numbers too: when this
           // one is exactly the next number, count it as received so the next
           // common-dialect frame is not reported as a gap.
@@ -275,7 +310,12 @@ export async function analyze(bytes, opts = {}) {
       failedStart = failedEnd = -1; // a valid frame ends any damaged span
       unsupStart = unsupEnd = -1;
       const t = tsBefore(e.off);
-      if (!Number.isNaN(t)) { framesWithTs++; lastTs = t; }
+      if (!Number.isNaN(t)) {
+        framesWithTs++;
+        if (Number.isNaN(firstCaptureTs)) firstCaptureTs = t;
+        if (t < lastTs) timestampReversals++;
+        lastTs = t;
+      }
       const key = (e.sysid << 8) | e.compid;
       const prev = lastSeq[key];
       const c = prev >= 0 ? classifySeq(prev, e.seq) : { kind: "first", next: e.seq };
@@ -286,6 +326,12 @@ export async function analyze(bytes, opts = {}) {
       lastSeq[key] = c.next;
 
       validFrames++;
+      const sender = senderEntry(e.sysid, e.compid);
+      sender.frames++;
+      if (!Number.isNaN(t)) {
+        if (Number.isNaN(sender.firstTs)) sender.firstTs = t;
+        sender.lastTs = t;
+      }
       if (n < maxFrames) {
         off.ensure(n + 1); msgid.ensure(n + 1); ts.ensure(n + 1); flen.ensure(n + 1); hdr.ensure(5 * n + 5);
         off.a[n] = e.off; msgid.a[n] = e.msgid; ts.a[n] = t; flen.a[n] = e.flen;
@@ -295,13 +341,19 @@ export async function analyze(bytes, opts = {}) {
       const m = msgEntry(e.msgid);
       m.count++;
       let src = m.sources.get(key);
-      if (!src) m.sources.set(key, (src = { count: 0, firstTs: NaN, lastTs: NaN }));
-      src.count++;
+      if (!src && sourceGroups < MAX_SOURCE_GROUPS) {
+        m.sources.set(key, (src = { count: 0, firstTs: NaN, lastTs: NaN }));
+        sourceGroups++;
+      }
+      if (!src) sourceGroupsTruncated = true;
+      else src.count++;
       if (!Number.isNaN(t)) {
         if (Number.isNaN(m.firstTs)) m.firstTs = t;
         m.lastTs = t;
-        if (Number.isNaN(src.firstTs)) src.firstTs = t;
-        src.lastTs = t;
+        if (src) {
+          if (Number.isNaN(src.firstTs)) src.firstTs = t;
+          src.lastTs = t;
+        }
       }
     }
   }
@@ -332,10 +384,8 @@ export async function analyze(bytes, opts = {}) {
   if (bytes.length === 0) onProgress(0, 0);
 
   const stats = parser.stats();
-  let firstTs = NaN;
-  let endTs = NaN;
-  for (let i = 0; i < n; i++) if (!Number.isNaN(ts.a[i])) { firstTs = ts.a[i]; break; }
-  endTs = lastTs;
+  const firstTs = firstCaptureTs;
+  const endTs = lastTs;
   const msgList = [...messages.values()].sort((a, b) => a.msgid - b.msgid);
   for (const m of msgList) {
     const rate = (count, first, last) => (count > 1 && last > first ? ((count - 1) * 1e6) / (last - first) : NaN);
@@ -356,8 +406,13 @@ export async function analyze(bytes, opts = {}) {
       flen: flen.a.subarray(0, n), hdr: hdr.a.subarray(0, 5 * n),
     },
     issues,
+    sequenceTimeline,
+    unlistedSequenceEvents,
     unlistedIssues: unlisted,
     messages: msgList,
+    senders: [...senders.values()].sort((a, b) => a.sysid - b.sysid || a.compid - b.compid),
+    sourceGroupsTruncated,
+    timestampReversals,
     crcErrors: counts.crc,
     unsupported: counts.unsupported,
     rejects: counts.reject,
@@ -434,18 +489,18 @@ export function hasDecoder(msgid) {
 // Decode a payload with the layout from the official XML. MAVLink v2 trims
 // trailing zero bytes, so the payload is padded back to full length first.
 // 64-bit integers come back as BigInt.
-export function decodePayload(msgid, payload) {
+export function decodePayload(msgid, payload, version = 2) {
   if (!hasDecoder(msgid)) return null;
   const def = MESSAGES[msgid];
   const full = new Uint8Array(Math.max(def.length, payload.length));
   full.set(payload);
   const v = new DataView(full.buffer);
-  const fields = def.fields.map((f) => {
+  const fields = def.fields.filter(f => version !== 1 || !f.ext).map((f) => {
     const [size, read] = READERS[f.type];
     let value;
     if (f.type === "char") {
       let s = "";
-      for (let i = 0; i < f.count; i++) {
+      for (let i = 0; i < Math.max(f.count, 1); i++) {
         const c = full[f.offset + i];
         if (c === 0) break;
         s += String.fromCharCode(c);
@@ -457,17 +512,20 @@ export function decodePayload(msgid, payload) {
     } else {
       value = read(v, f.offset);
     }
-    return { ...f, value, meaning: meaning(f, value) };
+    const wireBytes = Math.max(0, Math.min(size * Math.max(f.count, 1), payload.length - f.offset));
+    return { ...f, value, wireBytes, zeroFilled: wireBytes < size * Math.max(f.count, 1), meaning: meaning(f, value) };
   });
   return { msgid, name: def.name, description: def.description, length: def.length, trimmed: payload.length < def.length, fields };
 }
 
 function enumMeaning(name, value) {
   const e = ENUMS[name];
-  if (!e || typeof value !== "number") return "";
+  if (!e || (typeof value !== "number" && typeof value !== "bigint")) return "";
   if (!e.bitmask) return e.entries[value] || "";
-  const set = Object.keys(e.entries).map(Number).filter((bit) => bit && (value & bit) === bit);
-  return set.length ? set.map((bit) => e.entries[bit]).join(" | ") : "none";
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return '';
+  const raw = BigInt(value);
+  const set = Object.keys(e.entries).filter(key => { const bit = BigInt(key); return bit > 0n && (raw & bit) === bit; });
+  return set.length ? set.map(key => e.entries[key]).join(" | ") : e.entries[0] || "none";
 }
 
 function fixed(x, d) {
