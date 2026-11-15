@@ -123,13 +123,13 @@ Live at https://anirudh763.github.io/mavframe/ (GitHub Pages, served from
 `docs/` on `main`). Locally: `python3 -m http.server -d docs` and open
 http://localhost:8000/.
 
-![The Frames screen at 1440 x 900: frame rows filtered to CRC failures on the left; on the right ATTITUDE at offset 13,866 with wire CRC 0xA4FE vs computed 0x66D8, the field tree and the hex bytes with the CRC bytes highlighted](docs/screenshots/frame-details-1440.png)
+![Mavframe with MAVLink frames, a decoded header and a byte inspector](docs/screenshots/frame-details-1440.png)
 
 `docs/` is a static page that runs this parser in the browser: `src/mavframe.c`,
 compiled directly to a 5,055-byte WebAssembly module together with a small
 glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
 microsecond timestamp before each frame) or a raw byte stream, or press
-**Load engineering sample**. Files are read in the tab and never uploaded.
+**Load synthetic sample**. Files are read in the tab and never uploaded.
 
 It works like a packet analyzer (modelled on Wireshark's packet list, packet
 details and packet bytes panes):
