@@ -1,4 +1,4 @@
-const CACHE = 'mavframe-workbench-2026-11-14-2';
+const CACHE = 'mavframe-workbench-2026-11-15-1';
 const ASSETS = ['./', 'index.html', 'favicon.svg', 'mavframe.wasm', 'css/ui.css', 'css/inspector.css',
   'css/atkinson-hyperlegible-latin-400-normal.woff2', 'css/atkinson-hyperlegible-latin-700-normal.woff2', 'css/OFL-Atkinson-Hyperlegible.txt', 'LICENSE-MAVLink.txt', 'licenses/lucide-ISC.txt',
   'js/app.js', 'js/core.js', 'js/anatomy.js', 'js/finding.js', 'js/rows.js', 'js/theme.js', 'js/msgdefs.js',

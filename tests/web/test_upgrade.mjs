@@ -32,6 +32,43 @@ test('capture report downloads contain full real C results in JSON, CSV and Mark
   assert.deepEqual(page.errors, []); await page.close();
 });
 
+test('pending finding export rejects a changed capture and retries with the current identity', async () => {
+  const page = await open({ hash: '#/frames/0' });
+  const downloads = [];
+  page.on('download', item => downloads.push(item));
+  await page.evaluate(() => {
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let pause = true;
+    crypto.subtle.digest = (...args) => {
+      if (!pause) return digest(...args);
+      pause = false;
+      return new Promise((resolve, reject) => {
+        window.releaseFindingDigest = () => digest(...args).then(resolve, reject);
+      });
+    };
+  });
+  await page.locator('#export-finding').click();
+  await page.waitForFunction(() => typeof window.releaseFindingDigest === 'function');
+  await page.locator('.nav a[data-route="capture"]').click();
+  const sample = await fs.readFile(new URL('../../docs/sample/sample-flight.tlog', import.meta.url));
+  await page.locator('#file').setInputFiles({ name: 'replacement.bin', mimeType: 'application/octet-stream', buffer: sample.subarray(8, 29) });
+  await waitParsed(page, 'replacement.bin');
+  await page.locator('.nav a[data-route="frames"]').click();
+  await page.locator('#frame-table tbody a').first().click();
+  await page.evaluate(() => window.releaseFindingDigest());
+  await page.waitForFunction(() => /Could not export|Exported/.test(document.querySelector('#export-status').textContent));
+  assert.equal(downloads.length, 0, 'The old finding must not download under a new capture identity.');
+  assert.match(await page.locator('#export-status').textContent(), /capture changed/i);
+  const pending = page.waitForEvent('download');
+  await page.locator('#export-finding').click();
+  const item = await pending;
+  const finding = JSON.parse(await fs.readFile(await item.path(), 'utf8'));
+  assert.equal(finding.file.name, 'replacement.bin');
+  assert.equal(finding.finding.offset, 0);
+  assert.equal(item.suggestedFilename(), 'mavframe-finding-replacement-offset-0.json');
+  assert.deepEqual(page.errors, []); await page.close();
+});
+
 test('byte mutation rechecks an actual copy, reports a new CRC failure, and restores the original', async () => {
   const page = await open({ hash: '#/frames/0?tab=bytes' });
   await page.getByRole('button', { name: 'Mutate a copy', exact: true }).click();
