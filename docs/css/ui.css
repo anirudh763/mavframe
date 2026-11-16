@@ -45,7 +45,7 @@ th{font-size:.875rem;color:var(--muted);font-weight:700;background:var(--rail)}
 /* Product entry and browser-local profile screens. Workspace tokens remain shared. */
 .public-shell { min-height: 100vh; background: var(--canvas); }
 .landing-header { position: sticky; z-index: 20; top: 0; display: flex; align-items: center; gap: 24px; min-height: 64px; padding: 8px max(24px, calc((100vw - 1240px)/2)); border-bottom: 1px solid var(--divider); background: var(--surface); }
-.landing-header .brand,.auth-summary .brand { color: var(--ink); text-decoration: none; font-size: 1.2rem; font-weight: 800; letter-spacing: -.04em; }
+.landing-header .brand,.auth-summary .brand { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; color: var(--ink); text-decoration: none; font-size: 1.2rem; font-weight: 800; letter-spacing: -.04em; }
 .landing-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .mega { position: relative; }
 .mega summary { display: flex; align-items: center; min-height: 44px; padding: 0 10px; list-style: none; cursor: pointer; border-radius: var(--radius); }
@@ -232,6 +232,7 @@ th{font-size:.875rem;color:var(--muted);font-weight:700;background:var(--rail)}
 .trust-page section { max-width: 76ch; padding: 12px 0; border-top: 1px solid var(--divider); }
 .trust-page p { color: var(--muted); }
 .auth-trust { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.auth-trust a, .landing-footer [data-open-feedback] { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
 button,a,summary,select { touch-action: manipulation; }
 input,textarea,select { font-size: max(16px, 1em); }
 @media (max-width: 800px) {
