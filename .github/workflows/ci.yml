@@ -115,7 +115,7 @@ jobs:
         run: |
           npm --prefix tests/web ci
           npm --prefix tests/web exec -- playwright install --with-deps chromium
-          node --test --test-concurrency=1 tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs tests/web/test_upgrade.mjs
+          node --test --test-concurrency=1 tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs tests/web/test_upgrade.mjs tests/web/test_pwa_mime.mjs
 
   http-runtime:
     runs-on: ubuntu-latest

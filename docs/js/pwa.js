@@ -76,10 +76,19 @@ function wireUpdateChannel() {
 function watchRegistration(reg) {
   registration = reg;
   const showWaiting = () => { if (registration.waiting && navigator.serviceWorker.controller) updateNotice(true); };
-  reg.addEventListener('updatefound', () => {
+  const watchInstalling = () => {
     const worker = reg.installing;
-    worker?.addEventListener('statechange', () => { if (worker.state === 'installed' && navigator.serviceWorker.controller) showWaiting(); });
-  });
+    const changed = () => {
+      if (worker.state === 'installed' && navigator.serviceWorker.controller) showWaiting();
+      if (worker.state === 'redundant' && !reg.active && !navigator.serviceWorker.controller) {
+        showOffline('Offline preparation failed. Reconnect and reload to try again.', true);
+      }
+    };
+    worker?.addEventListener('statechange', changed);
+    if (worker) changed();
+  };
+  reg.addEventListener('updatefound', watchInstalling);
+  watchInstalling();
   showWaiting();
 }
 export function initPwa({ busy = () => false, onUpdateAvailable = () => {}, onOfflineStatus = () => {} } = {}) {

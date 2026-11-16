@@ -1,4 +1,4 @@
-const CACHE = 'mavframe-workbench-2026-11-16-12';
+const CACHE = 'mavframe-workbench-2026-11-16-13';
 const ASSETS = [
   './', 'index.html', 'trust.html', 'CLOUD_SYNC.md', 'SUPABASE_SYNC_SETUP.sql', 'dialect-coverage.json', 'manifest.webmanifest', 'favicon.svg', 'og-card.png',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png', 'icons/apple-touch-icon.png',
@@ -28,6 +28,8 @@ const allowed = new Set(assetURLs);
 const canonical = request => { const url = new URL(request.url); url.hash = ''; return url.href; };
 const hasExpectedType = (response, path) => {
   const type = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (/\.md$/.test(path)) return type === 'text/plain' || type === 'text/markdown';
+  if (/\.sql$/.test(path)) return type === 'text/plain' || type === 'application/sql';
   const expected = expectedType(path);
   return expected === 'javascript' ? /^(text|application)\/(javascript|ecmascript)$/.test(type) : type === expected;
 };
