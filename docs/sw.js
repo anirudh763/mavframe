@@ -1,4 +1,4 @@
-const CACHE = 'mavframe-workbench-2026-11-15-11';
+const CACHE = 'mavframe-workbench-2026-11-16-12';
 const ASSETS = [
   './', 'index.html', 'trust.html', 'CLOUD_SYNC.md', 'SUPABASE_SYNC_SETUP.sql', 'dialect-coverage.json', 'manifest.webmanifest', 'favicon.svg', 'og-card.png',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png', 'icons/apple-touch-icon.png',

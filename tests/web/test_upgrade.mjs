@@ -290,8 +290,10 @@ test('changed worker waits for peer work, activates by consent, then serves fina
     assert.ok(await page.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration())?.waiting)), 'the update remains waiting after peer-busy rejection');
 
     await peer.close(); peer = null;
+    const reloaded = page.waitForNavigation({ waitUntil: 'load' });
     await page.getByRole('button', { name: 'Update and reload', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#update-message').textContent.startsWith('Update accepted.'));
+    await reloaded;
     await page.waitForFunction(async cacheName => {
       const worker = navigator.serviceWorker.controller;
       if (!worker) return false;
