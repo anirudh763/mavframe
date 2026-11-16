@@ -25,6 +25,44 @@
 
 #include "mavframe_crc_extra_common.h"
 
+#define MAVFRAME_MAX_CUSTOM_CRC_EXTRAS 512U
+static uint32_t custom_crc_extra_table[MAVFRAME_MAX_CUSTOM_CRC_EXTRAS];
+static size_t custom_crc_extra_count;
+
+static int table_lookup(const uint32_t *table, size_t count, uint32_t msgid, uint8_t *extra)
+{
+    size_t lo = 0, hi = count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        uint32_t id = table[mid] >> 8;
+        if (id == msgid) {
+            *extra = (uint8_t)(table[mid] & 0xFFU);
+            return 1;
+        }
+        if (id < msgid) lo = mid + 1;
+        else hi = mid;
+    }
+    return 0;
+}
+
+/* Session-local extension to the pinned dialect. Pairs encode msgid in the
+ * high 24 bits and CRC_EXTRA in the low byte, sorted by msgid. */
+int mavframe_set_custom_crc_extras(const uint32_t *pairs, size_t count)
+{
+    size_t i;
+    uint8_t extra;
+    if (count > MAVFRAME_MAX_CUSTOM_CRC_EXTRAS || (count && pairs == NULL)) return 0;
+    for (i = 0; i < count; i++) {
+        uint32_t id = pairs[i] >> 8;
+        if (id > 0xFFFFFFU || (i && (pairs[i - 1] >> 8) >= id)) return 0;
+        if (table_lookup(mavframe_crc_extra_table,
+                         sizeof(mavframe_crc_extra_table) / sizeof(mavframe_crc_extra_table[0]), id, &extra)) return 0;
+    }
+    if (count) memcpy(custom_crc_extra_table, pairs, count * sizeof(*pairs));
+    custom_crc_extra_count = count;
+    return 1;
+}
+
 void mavframe_init(mavframe_parser *p)
 {
     memset(p, 0, sizeof(*p));
@@ -43,22 +81,9 @@ uint16_t mavframe_crc16(uint16_t crc, const uint8_t *data, size_t len)
 
 int mavframe_crc_extra(uint32_t msgid, uint8_t *extra)
 {
-    /* Binary search; each table entry is (msgid << 8) | crc_extra, sorted. */
-    size_t lo = 0;
-    size_t hi = sizeof(mavframe_crc_extra_table) / sizeof(mavframe_crc_extra_table[0]);
-    while (lo < hi) {
-        size_t mid = lo + (hi - lo) / 2;
-        uint32_t id = mavframe_crc_extra_table[mid] >> 8;
-        if (id == msgid) {
-            *extra = (uint8_t)(mavframe_crc_extra_table[mid] & 0xFF);
-            return 1;
-        }
-        if (id < msgid)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return 0;
+    if (table_lookup(mavframe_crc_extra_table,
+                     sizeof(mavframe_crc_extra_table) / sizeof(mavframe_crc_extra_table[0]), msgid, extra)) return 1;
+    return table_lookup(custom_crc_extra_table, custom_crc_extra_count, msgid, extra);
 }
 
 /* Give up on the candidate at head: release it and everything before the

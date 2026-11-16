@@ -8,6 +8,7 @@ self.onmessage = async ({ data }) => {
     const engine = await ready();
     if (data.command === 'start') {
       if (live) throw new Error('A live session is already active.');
+      if (!engine.setCustomExtras(Uint32Array.from(data.customPairs || []))) throw new Error('The custom dialect could not be installed in the C/Wasm parser.');
       live = liveAnalyzer(engine);
       self.postMessage({ id: data.id, result: live.summary() });
     } else if (data.command === 'feed') {
@@ -19,6 +20,7 @@ self.onmessage = async ({ data }) => {
       self.postMessage({ id: data.id, result }, [result.bytes.buffer]);
     } else if (data.command === 'fuzz') {
       if (live) throw new Error('Fuzzing requires a separate parser worker.');
+      if (!engine.setCustomExtras(Uint32Array.from(data.customPairs || []))) throw new Error('The custom dialect could not be installed in the C/Wasm parser.');
       const original = new Uint8Array(data.frame);
       if (!original.length || original.length > 280) throw new Error('Load a valid frame before fuzzing.');
       const started = performance.now();

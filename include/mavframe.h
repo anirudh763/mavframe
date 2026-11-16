@@ -120,6 +120,10 @@ uint16_t mavframe_crc16(uint16_t crc, const uint8_t *data, size_t len);
 
 /* Look up CRC_EXTRA for a message id. Returns 1 if known, 0 if not. */
 int mavframe_crc_extra(uint32_t msgid, uint8_t *extra);
+/* Install a sorted session-local table of (msgid << 8) | CRC_EXTRA pairs.
+ * Built-in IDs, duplicates, unsorted pairs and more than 512 entries reject
+ * the whole update without replacing the active custom table. */
+int mavframe_set_custom_crc_extras(const uint32_t *pairs, size_t count);
 
 /* Accessors. All are valid after MAVFRAME_FRAME until the next feed, poll or
  * flush call. The pointers point into the parser's own buffer. */

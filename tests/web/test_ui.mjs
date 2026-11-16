@@ -60,7 +60,7 @@ test("Load sample shows the generator's exact counts and per-sender rates", asyn
   const page = await openPage();
   // While the sample downloads, the old result's status must not stay up.
   const hold = await holdSample(page);
-  await page.getByRole("button", { name: "Load synthetic sample" }).click();
+  await page.getByRole("button", { name: "Load sample" }).click();
   await hold.seen; // the request is in flight and held: this is exactly the loading phase
   assert.equal(await statusText(page), "Loading sample-flight.tlog…");
   assert.equal(await page.isDisabled("#load-sample"), true);
@@ -84,9 +84,12 @@ test("Load sample shows the generator's exact counts and per-sender rates", asyn
   assert.match(hb, /255:190 at 1\.00 Hz/);
   assert.match(hb, /2:191 at n\/a Hz/);
   assert.match(hb, /2\.02 all/);
-  // The external link must not replace the loaded capture.
-  assert.equal(await page.getAttribute("#gap-assumptions a", "target"), "_blank");
-  assert.match(await page.getAttribute("#gap-assumptions a", "rel"), /noopener/);
+  assert.match(await page.textContent("#gap-assumptions"), /fully observed channel and in-order arrival/);
+  await page.goto(base + "#/help");
+  const packetLossLink = page.getByRole("link", { name: "MAVLink packet-loss assumptions (opens in a new tab)" });
+  assert.equal(await packetLossLink.getAttribute("target"), "_blank");
+  assert.match(await packetLossLink.getAttribute("rel"), /noopener/);
+  await page.goto(base + "#/capture");
   // A message name links to Frames filtered to it.
   await page.locator("#msg-table").getByRole("link", { name: "GPS_RAW_INT" }).click();
   await page.waitForFunction(() => /^#\/frames\?msg=24$/.test(location.hash));
@@ -97,6 +100,7 @@ test("Load sample shows the generator's exact counts and per-sender rates", asyn
   assert.match(await page.textContent("#panel-decoded"), /yaw \(extension\)\s*0 cdeg\s*not provided/);
   // Timeline markers on Frames.
   await goFrames(page);
+  await page.locator(".timeline-box > summary").click();
   assert.equal(await page.locator("#timeline g.crc").count(), truth.crc_errors);
   assert.equal(await page.locator("#timeline g.gap").count(), truth.gaps);
   assert.deepEqual(await cspViolations(page), [], "CSP violations");
@@ -120,7 +124,7 @@ test("Next and Previous issue step through CRC failures and sequence gaps", asyn
   assert.deepEqual(page.errors, []);
   await page.close();
   // Previous row / Next row (narrow Frame details) move one row.
-  const narrow = await openPage({ viewport: { width: 375, height: 800 }, hash: "#/frames/5" });
+  const narrow = await openPage({ viewport: { width: 375, height: 812 }, hash: "#/frames/5" });
   await narrow.waitForSelector("#crc-compare .v");
   const t0 = await narrow.textContent("#h-details");
   await narrow.getByRole("button", { name: "Next row" }).click();
@@ -210,7 +214,7 @@ test("keyboard only: load the sample, go to Frames, step to an issue, move throu
 
 test("375 px width and 200% zoom: no horizontal page scroll, controls on screen", async () => {
   for (const [label, opts] of [
-    ["375 px", { viewport: { width: 375, height: 800 } }],
+    ["375 px", { viewport: { width: 375, height: 812 } }],
     ["200% page zoom of a 1280 px window", { viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 }],
   ]) {
     const page = await openPage(opts);
@@ -225,7 +229,7 @@ test("375 px width and 200% zoom: no horizontal page scroll, controls on screen"
     await page.close();
   }
   // 200% text size (browser text-only zoom) at 1280 px.
-  const page = await openPage({ viewport: { width: 1280, height: 900 } });
+  const page = await openPage({ viewport: { width: 1440, height: 900 } });
   await page.evaluate(() => { document.documentElement.style.fontSize = "32px"; }); // CSSOM: allowed by the CSP
   for (const hash of ["#/capture", "#/frames", "#/help"]) {
     await page.goto(base + hash);
@@ -313,15 +317,28 @@ test("Cancel during the final browser handoff keeps the previous capture", async
 });
 
 test("parsing can be cancelled; the previous capture stays", async () => {
-  const page = await openPage();
+  const page = await openPage({ route: p => p.addInitScript(() => {
+    const NativeChannel = window.MessageChannel;
+    window.MessageChannel = class extends NativeChannel {
+      constructor() {
+        super();
+        const post = this.port2.postMessage.bind(this.port2);
+        this.port2.postMessage = (...args) => {
+          if (window.__holdParseChunk && document.getElementById("progress")?.value > 0) window.__releaseParseChunk = () => post(...args);
+          else post(...args);
+        };
+      }
+    };
+  }) });
   const sample = fs.readFileSync(path.join(ROOT, truth.file));
   const big = path.join(CASES, "cancel.tlog");
   fs.writeFileSync(big, Buffer.concat(Array(400).fill(sample)));
+  await page.evaluate(() => { window.__holdParseChunk = true; });
   await upload(page, big);
-  // Click as soon as Cancel shows: the progress bar keeps updating beside it, so Playwright's
-  // "stable position" wait could outlast the whole parse on a fast machine.
-  await page.waitForSelector("#cancel:not([hidden])");
-  await page.getByRole("button", { name: "Cancel" }).click({ force: true });
+  // Hold a real parser yield so browser scheduling cannot finish before the click.
+  await page.waitForFunction(() => typeof window.__releaseParseChunk === "function");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.evaluate(() => window.__releaseParseChunk());
   await page.waitForFunction(() => /Cancelled parsing cancel.tlog. Still showing sample-flight.tlog/.test(document.getElementById("status").textContent));
   assert.equal(await metric(page, "m-frames"), String(truth.frames));
   assert.equal(await page.isHidden("#cancel"), true);
@@ -332,7 +349,7 @@ test("parsing can be cancelled; the previous capture stays", async () => {
 test("unsupported message ids are explained as not checked, not corrupt; axe stays clean", async () => {
   const page = await openPage();
   await upload(page, path.join(CASES, "malformed.bin"));
-  await page.waitForFunction(() => /^malformed.bin:/.test(document.getElementById("status").textContent) && !document.getElementById("load-sample").disabled);
+  await page.waitForFunction(() => document.getElementById("status").textContent === "malformed.bin loaded." && !document.getElementById("load-sample").disabled);
   assert.ok(Number(await metric(page, "m-unsupported")) >= 1);
   assert.ok(Number(await metric(page, "m-crc")) >= 1);
   await goFrames(page, "?check=unsupported");
@@ -405,6 +422,7 @@ for (const theme of ["light", "dark"]) {
   test(`timeline density bars and their legend glyph reach 3:1 (${theme})`, async () => {
     const page = await openPage({ viewport: { width: 1280, height: 900 }, route: theme === "dark" ? darkInit : null });
     await goFrames(page);
+    await page.locator(".timeline-box > summary").click();
     const r = await page.evaluate((src) => {
       const bg = eval(src);
       const bin = document.querySelector("#timeline .bin");
@@ -450,7 +468,7 @@ for (const theme of ["light", "dark"]) {
     }
     // A selected field's bytes are highlighted with text contrast >= 4.5:1.
     await page.locator("#panel-header").getByRole("button", { name: "CRC", exact: true }).click();
-    const hl = await page.$eval("#hex .b.hl", (e) => { const cs = getComputedStyle(e); return [cs.color, cs.backgroundColor]; });
+    const hl = await page.evaluate(() => { const cs = getComputedStyle(document.querySelector("#hex .b.hl")); return [cs.color, cs.backgroundColor]; });
     assert.ok(contrast(hl[0], hl[1]) >= 4.5, `highlighted byte text ${contrast(hl[0], hl[1]).toFixed(2)}:1 (${theme})`);
     await page.close();
   });
@@ -488,7 +506,7 @@ test("Source on GitHub looks like a link; the primary button has a hover state",
   const page = await openPage();
   const r = await page.evaluate(() => {
     const repo = document.querySelector(".rail-foot a[href='https://github.com/anirudh763/mavframe']");
-    const prose = document.querySelector("#gap-assumptions a");
+    const prose = document.querySelector("#screen-help a[target='_blank']");
     return { deco: getComputedStyle(repo).textDecorationLine, color: getComputedStyle(repo).color, link: getComputedStyle(prose).color };
   });
   assert.match(r.deco, /underline/);

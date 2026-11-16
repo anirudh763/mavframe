@@ -2,26 +2,113 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
-<title>Capture – Mavframe</title>
+<title>Mavframe — MAVLink packet inspection</title>
 <meta name="description" content="Local MAVLink v1/v2 capture analysis, frame decoding and reports.">
-<meta name="theme-color" content="#f6f5f2">
-<meta name="color-scheme" content="light">
+<link rel="canonical" href="https://anirudh763.github.io/mavframe/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Mavframe">
+<meta property="og:title" content="Mavframe — MAVLink packet inspection">
+<meta property="og:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Runs in your browser; no capture upload.">
+<meta property="og:url" content="https://anirudh763.github.io/mavframe/">
+<meta property="og:image" content="https://anirudh763.github.io/mavframe/og-card.png">
+<meta property="og:image:secure_url" content="https://anirudh763.github.io/mavframe/og-card.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Mavframe packet inspector showing a synthetic ATTITUDE frame with a received CRC that differs from the C parser calculation.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mavframe — MAVLink packet inspection">
+<meta name="twitter:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Runs in your browser; no capture upload.">
+<meta name="twitter:image" content="https://anirudh763.github.io/mavframe/og-card.png">
+<meta name="twitter:image:alt" content="Mavframe packet inspector showing a synthetic ATTITUDE frame with a received CRC that differs from the C parser calculation.">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Mavframe","applicationCategory":"DeveloperApplication","applicationSubCategory":"MAVLink capture inspector","operatingSystem":"Any device with a modern browser; Web Serial requires a supported secure desktop browser","url":"https://anirudh763.github.io/mavframe/","description":"Free, local browser analysis of MAVLink v1/v2 raw streams and .tlog captures, frame decoding, CRC comparison and reports. CRC does not authenticate signatures; the browser does not verify signatures.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"softwareVersion":"1.0.0"}</script>
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mavframe">
+<meta name="color-scheme" content="dark light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="css/ui.css">
 <link rel="stylesheet" href="css/inspector.css">
 <script src="js/theme.js"></script>
+<script src="js/team-config.js"></script>
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
 <a class="skip" href="#workspace" id="skip">Skip to content</a>
-<div class="app">
+<noscript><p class="noscript" id="noscript">The browser inspector needs JavaScript; captures are not uploaded. You can use <code>mavframe-dump capture.bin</code> from the repository.</p></noscript>
+<div id="public-shell" class="public-shell" hidden>
+ <header class="landing-header">
+  <a class="brand" href="#/" aria-label="Mavframe home">Mavframe</a>
+  <nav aria-label="Product navigation" class="landing-nav" id="landing-nav">
+   <details class="mega"><summary>Features</summary><div class="mega-panel"><a href="#/app/capture"><strong>Capture</strong><span>Read a local file or load the synthetic sample.</span></a><a href="#/app/frames"><strong>Frame inspection</strong><span>Filter CRC results and compare fields with bytes.</span></a><a href="#/app/help"><strong>Exports and limits</strong><span>Review reproducible reports and format scope.</span></a></div></details>
+   <details class="mega"><summary>Use cases</summary><div class="mega-panel"><a href="#/app/frames?check=crc"><strong>Find a bad checksum</strong><span>Open CRC failures in the frame list.</span></a><a href="#/app/frames?check=issues"><strong>Review a sequence gap</strong><span>Inspect parser findings and assumptions.</span></a></div></details>
+   <details class="mega"><summary>How it works</summary><div class="mega-panel"><a href="#how-it-works"><strong>Local parsing</strong><span>Capture bytes are analyzed in this browser.</span></a><a href="#how-it-works"><strong>Reproducible evidence</strong><span>Export offsets, checksum values and parser context.</span></a></div></details>
+   <details class="mega"><summary>Format and docs</summary><div class="mega-panel"><a href="#/app/help"><strong>Formats and limits</strong><span>Supported MAVLink versions and dialect scope.</span></a><a href="https://github.com/anirudh763/mavframe" target="_blank" rel="noopener"><strong>Source code</strong><span>MIT-licensed parser and browser inspector.</span></a></div></details>
+   <details class="mega suite-menu"><summary>More tools</summary><div class="mega-panel"><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener"><strong>FlightSeal</strong><span>Seal raw PX4 .ulg files; Mavframe captures are not transferred.</span></a><a href="https://anirudh763.github.io/mavframe/" aria-current="page"><strong>Mavframe</strong><span>MAVLink capture inspection.</span></a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener"><strong>CueReport</strong><span>Accessibility issue reporting.</span></a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener"><strong>Issue Warehouse</strong><span>Explore public accessibility reports.</span></a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener"><strong>Portfolio</strong><span>Project hub.</span></a><span class="suite-unavailable" aria-disabled="true"><strong>LeaseQ</strong><span>Deployment unavailable (HTTP 404 checked 2026-11-15).</span></span></div></details>
+  </nav>
+  <div class="landing-actions"><button type="button" class="btn pwa-install" id="install-action" hidden>Install app</button><button type="button" class="btn pwa-help" id="install-help" hidden>Install help</button><a href="#/login" data-auth-route="login">Log in</a><a class="btn primary" href="#/signup" data-auth-route="signup">Create account</a><a class="btn" href="#/app" data-launch-workspace>Launch Workspace</a><details id="public-account" class="public-account" hidden><summary id="public-account-label">Profile</summary><div><a href="#/profile">Profile</a><a href="#/saved">Saved workspaces</a><button type="button" data-logout>Log out</button></div></details></div>
+  <button type="button" id="landing-menu" class="btn landing-menu" aria-expanded="false" aria-controls="landing-nav">Menu</button>
+ </header>
+ <main id="public-main" class="public-main" tabindex="-1">
+  <p id="pwa-status-public" class="offline-public" role="status" aria-live="polite"></p>
+  <section id="screen-landing" class="public-screen" aria-labelledby="landing-title" hidden>
+   <div class="hero-grid">
+    <div class="hero-copy"><p class="eyebrow">MAVLink capture inspection</p><h1 id="landing-title" tabindex="-1">Trace a signal from frame to byte.</h1><p class="hero-lede">Inspect MAVLink frames in a local capture. Start with a sample checksum finding.</p><div class="hero-actions"><button type="button" class="btn primary" id="hero-inspect">Inspect sample frame</button><a class="btn" href="#/app" data-launch-workspace>Launch Workspace</a><a class="btn" href="#/signup" data-auth-route="signup">Create account</a></div><div id="hero-task" class="hero-task" aria-label="Sample frame inspection"><p id="hero-task-status" role="status" aria-live="polite">A bundled synthetic capture is ready for local analysis.</p><div id="hero-task-result" class="hero-task-result" hidden></div></div><p class="real-sample-action"><button type="button" class="btn" id="hero-real-sample">Inspect privacy-scrubbed real capture</button></p><p id="hero-real-status" role="status" aria-live="polite" class="muted small">5.86 MB public test capture, derived with GPS coordinates redacted. <a href="sample/real-flight-provenance.md">Source, license, transformation and expected counters</a>.</p><p class="local-note">Free. Sample and capture analysis run in this browser.</p></div>
+    <section class="showcase" aria-label="Mavframe feature previews">
+     <div class="showcase-head"><span id="showcase-caption">Synthetic sample · capture summary</span><button type="button" id="showcase-pause" class="btn" aria-pressed="false">Pause</button></div>
+     <div class="showcase-stage" aria-live="off">
+      <article class="show-slide" data-slide="0"><h2>Capture identity and counters</h2><p>Sample capture · synthetic</p><dl class="preview-metrics"><div><dt>Valid frames</dt><dd>1,497</dd></div><div><dt>CRC failures</dt><dd>3</dd></div><div><dt>Sequence gaps</dt><dd>4 estimated</dd></div></dl><p class="preview-foot">Counts from the bundled sample; not a live radio feed.</p></article>
+      <article class="show-slide" data-slide="1" hidden><h2>Filter CRC failures</h2><p>Frames · CRC failed</p><div class="preview-table"><span>Check</span><span>Message</span><span>Offset</span><strong>CRC failed</strong><strong>ATTITUDE</strong><code>example</code></div><p class="preview-foot">Illustrative row from a synthetic capture.</p></article>
+      <article class="show-slide" data-slide="2" hidden><h2>Link fields to bytes</h2><p>Frame details · decoded and wire view</p><div class="preview-split"><ul><li>time_boot_ms</li><li>roll</li><li>pitch</li></ul><pre>fd 1c 00 00 2a 01 00
+40 00 00 00 …</pre></div><p class="preview-foot">Illustrative layout; field names and bytes vary by message.</p></article>
+      <article class="show-slide" data-slide="3" hidden><h2>Export a finding</h2><p>One selected row · JSON</p><dl class="preview-export"><div><dt>Capture offset</dt><dd>Included</dd></div><div><dt>Wire / computed CRC</dt><dd>Included</dd></div><div><dt>Payload</dt><dd>Omitted by default</dd></div></dl><p class="preview-foot">Payload inclusion requires an explicit choice.</p></article>
+     </div>
+     <div class="showcase-tabs" role="group" aria-label="Choose feature preview"><button type="button" data-show-slide="0" aria-pressed="true">Capture summary</button><button type="button" data-show-slide="1" aria-pressed="false">CRC filter</button><button type="button" data-show-slide="2" aria-pressed="false">Fields and bytes</button><button type="button" data-show-slide="3" aria-pressed="false">Finding export</button></div>
+    </section>
+   </div>
+   <section class="landing-section" id="features"><p class="eyebrow">Focused inspection</p><h2>From capture to shareable evidence.</h2><div class="feature-grid"><article><h3>Read supported captures</h3><p>Inspect MAVLink v1/v2 streams and timestamped telemetry logs locally.</p></article><article><h3>Compare a frame</h3><p>Move between frame status, decoded fields, checksum bytes and payload.</p></article><article><h3>Keep exports useful</h3><p>Save a capture summary or a selected finding with raw payload excluded by default.</p></article></div></section>
+   <section class="landing-section how-section" id="how-it-works"><p class="eyebrow">How it works</p><h2>Open. Inspect. Hand off.</h2><p>Files are parsed in this browser using the C parser compiled to WebAssembly. CRC checks detect some transmission damage; they do not authenticate a sender or verify signed-frame signatures.</p><p>Unknown message IDs are reported as unsupported, not automatically corrupt. Sequence gaps are estimates under a single fully observed channel and in-order arrival assumption.</p><a class="text-link" href="#/app/help">Read format help</a></section>
+   <section class="landing-section access-section" id="team-interest" aria-labelledby="team-interest-title"><p class="eyebrow">Optional · no paid plan</p><h2 id="team-interest-title">Team and cloud interest</h2><p>Mavframe has no hosted team or cloud service today. Share a product-interest note; this does not create an account, purchase, or enrollment.</p><p id="team-destination" class="muted small">No delivery endpoint is configured. Submissions remain a draft in this tab and are not sent.</p><form id="team-form"><label for="team-email">Email</label><input id="team-email" name="email" type="email" autocomplete="email" required maxlength="254"><label for="team-size">Team size</label><select id="team-size" name="teamSize" required><option value="">Choose a range</option><option value="1">Just me</option><option value="2-10">2–10</option><option value="11-50">11–50</option><option value="51-200">51–200</option><option value="201+">201 or more</option></select><label for="team-use">Use case</label><textarea id="team-use" name="useCase" maxlength="1000" required></textarea><p class="field-hint">Only these three fields are included. Do not paste captures, coordinates, keys or private telemetry.</p><p id="team-error" role="alert" hidden></p><p id="team-status" role="status" aria-live="polite"></p><button type="submit" class="btn primary" id="team-submit">Save draft</button></form></section>
+   <footer class="landing-footer"><span>MIT licensed · free tools</span><a href="https://github.com/anirudh763/mavframe" target="_blank" rel="noopener">Source on GitHub</a><a href="#/app/help">Format help</a><a href="trust.html#privacy">Privacy</a><a href="trust.html#terms">Terms</a><a href="trust.html#security">Security &amp; offline data</a><button type="button" data-open-feedback>Send feedback</button></footer>
+  </section>
+  <section id="screen-auth" class="public-screen auth-screen" aria-labelledby="auth-title" hidden>
+   <div class="auth-summary"><a href="#/" class="brand">Mavframe</a><h1 id="auth-side-title">A local profile for your inspection settings.</h1><p>Saved on this browser only. It does not upload or encrypt captures.</p><ul><li>Keep view settings and filters</li><li>Open every tool without a paid tier</li><li>Use a separate demo session without signing in</li></ul></div>
+   <form id="auth-form" class="auth-form" novalidate>
+    <a class="text-link" id="auth-return" href="#/">← Home</a><h2 id="auth-title" tabindex="-1">Create a local profile</h2><p id="auth-explainer">Profiles are stored only in this browser. They do not verify identity, sync, or recover remotely.</p><p id="auth-pending-save" class="local-note" hidden></p>
+    <label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254" aria-describedby="auth-error">
+    <label for="auth-password">Password</label><div class="password-line"><input id="auth-password" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required aria-describedby="password-hint auth-error"><button id="password-visibility" type="button" class="btn" aria-pressed="false">Show</button></div>
+    <p id="password-hint" class="field-hint">Use at least 12 characters. A password manager and paste are supported.</p>
+    <button id="auth-submit" class="btn primary auth-submit" type="submit">Create profile</button>
+    <p id="auth-error" class="form-message" role="alert" hidden></p><p id="auth-status" class="form-message" role="status" aria-live="polite"></p>
+    <a id="auth-switch" class="text-link" href="#/login">Already have a profile? Log in</a>
+    <a class="btn demo-button" data-demo href="#/app">Continue with demo</a>
+    <nav class="auth-trust" aria-label="Trust and privacy"><a href="trust.html#privacy">Privacy</a><a href="trust.html#terms">Terms</a><a href="trust.html#security">Security &amp; offline data</a></nav>
+   </form>
+  </section>
+  <section id="screen-profile" class="public-screen profile-screen" aria-labelledby="profile-title" hidden>
+   <a class="text-link" href="#/app">← Return to inspector</a><h1 id="profile-title" tabindex="-1">Profile</h1><p id="profile-email"></p><p>Saved on this browser. Profile names and saved settings are not an access-control boundary or encryption.</p>
+   <form id="save-context-form"><label for="context-name">Saved view name</label><input id="context-name" maxlength="80" value="Current inspection view"><button class="btn primary" type="submit">Save view settings</button><p id="profile-status" role="status" aria-live="polite"></p><p id="profile-error" role="alert" hidden></p></form>
+   <section class="profile-backup" aria-labelledby="backup-title"><h2 id="backup-title">Encrypted profile backup</h2><p>Moves saved view settings and theme between devices. Capture bytes, payloads, signing material, password verifiers and sessions are excluded. A lost backup passphrase cannot be recovered.</p><label for="backup-passphrase">Backup passphrase</label><input id="backup-passphrase" type="password" minlength="12" maxlength="1024" autocomplete="new-password"><button type="button" id="backup-export" class="btn">Export encrypted backup</button><label for="backup-file">Import backup file</label><input id="backup-file" type="file" accept="application/json,.json"><button type="button" id="backup-preview" class="btn">Preview encrypted backup</button><div id="backup-preview-box" hidden><p id="backup-preview-text" role="status" aria-live="polite"></p><button type="button" id="backup-restore" class="btn primary">Restore backup</button><button type="button" id="backup-merge" class="btn">Merge into matching profile</button><button type="button" id="backup-cancel" class="btn">Cancel import</button></div><p id="backup-status" role="status" aria-live="polite"></p><p id="backup-error" role="alert" hidden></p></section>
+   <section id="profile-sync" class="profile-sync" aria-labelledby="sync-title"><h2 id="sync-title">Optional cloud sync</h2><p>Separate cloud account, explicit sync, saved views and theme only. No provider is configured by default; this is not end-to-end encrypted. See <a href="CLOUD_SYNC.md">setup and authorization requirements</a>.</p><label for="sync-project">Supabase project URL</label><input id="sync-project" type="url" autocomplete="url" inputmode="url"><label for="sync-anon-key">Public publishable or legacy anon key</label><input id="sync-anon-key" type="text" autocomplete="off"><label for="sync-email">Cloud account email</label><input id="sync-email" type="email" autocomplete="email"><label for="sync-password">Cloud account password</label><input id="sync-password" type="password" autocomplete="current-password"><label class="sync-consent"><input id="sync-consent" type="checkbox"> I authorize sending only saved view settings and theme to this project.</label><button type="button" id="sync-connect" class="btn">Connect cloud account</button><button type="button" id="sync-now" class="btn" disabled>Check sync</button><p id="sync-status" role="status" aria-live="polite"></p><p id="sync-error" role="alert" hidden></p><div id="sync-collections" aria-label="Cloud sync collections"></div></section>
+   <p id="profile-pending-import" class="local-note" hidden>A guest task is open in this tab. Saving below adds only its view settings; the capture remains temporary in this tab.</p><button type="button" id="import-pending-save" class="btn primary" hidden>Save guest view settings to profile</button><p><a class="btn" href="#/saved">Saved workspaces</a></p>
+  </section>
+  <section id="screen-saved" class="public-screen profile-screen" aria-labelledby="saved-title" hidden>
+   <a class="text-link" href="#/profile">← Profile</a><h1 id="saved-title" tabindex="-1">Saved workspaces</h1><p>Only view settings and filters are saved. Capture bytes and payloads are not.</p><div id="saved-list"></div>
+  </section>
+ </main>
+</div>
+<div class="app" id="workspace-shell" hidden>
  <header class="command-header">
   <div id="sheet" class="rail">
    <div class="rail-inner">
     <div class="wordmark">
-      <a class="brand" href="#/capture">Mavframe</a>
+      <a class="brand" href="#/">Mavframe</a>
     </div>
     <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
     <nav aria-label="Main" class="nav">
@@ -31,9 +118,14 @@
         <li><a href="#/help" data-route="help">Format help</a></li>
       </ul>
     </nav>
+    <details class="workspace-suite"><summary>More tools</summary><div><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener">FlightSeal — open console</a><a href="https://anirudh763.github.io/mavframe/" aria-current="page">Mavframe — this tool</a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener">CueReport — accessibility reports</a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener">Issue Warehouse — public reports</a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener">Portfolio — project hub</a><span aria-disabled="true">LeaseQ — deployment unavailable (HTTP 404 checked 2026-11-15)</span></div></details>
     <div class="rail-foot">
       <button type="button" class="btn" id="theme-toggle" aria-pressed="false">Dark theme</button>
-      <a href="https://github.com/anirudh763/mavframe">Source on GitHub</a>
+      <button type="button" class="btn pwa-install" data-install-action hidden>Install app</button><button type="button" class="btn pwa-help" data-install-help hidden>Install help</button>
+      <details class="account-menu" id="account-menu"><summary id="account-label">Guest session</summary><div><a href="#/profile" id="profile-link">Profile</a><a href="#/saved" id="saved-link">Saved workspaces</a><button type="button" id="logout-button">Log out</button></div></details>
+      <button type="button" class="btn" data-open-feedback>Send feedback</button>
+      <a href="trust.html#privacy">Privacy</a><a href="trust.html#terms">Terms</a><a href="trust.html#security">Security &amp; offline</a>
+      <a href="https://github.com/anirudh763/mavframe" target="_blank" rel="noopener">Source on GitHub</a>
     </div>
    </div>
   </div>
@@ -46,18 +138,36 @@
       <span class="mobile-brand">Mavframe</span>
       <a class="back" id="back-link" href="#/frames" hidden>← Back</a>
       <nav aria-label="Breadcrumb" class="crumbs"><ol id="crumbs"><li>Mavframe</li><li aria-current="page">Capture</li></ol></nav>
+      <nav class="workspace-actions" aria-label="Account and workspace"><a href="#/login" data-auth-route="login">Log in</a><a href="#/signup" data-auth-route="signup">Create account</a><a class="btn" href="#/app" data-launch-workspace>Launch Workspace</a><a id="save-profile-link" href="#/signup" data-save-profile>Save to profile</a><details id="workspace-account" class="public-account" hidden><summary id="workspace-account-label">Profile</summary><div><a href="#/profile">Profile</a><a href="#/saved">Saved workspaces</a><button type="button" data-logout>Log out</button></div></details></nav>
     </div>
 
+    <nav class="product-nav" aria-label="Inspection pages">
+      <a href="/" data-product-route="decoder">Decoder</a><a href="/anomalies" data-product-route="anomalies">Anomalies</a><a href="/stream" data-product-route="stream">Stream</a><a href="/system" data-product-route="system">System</a>
+    </nav>
     <main id="workspace" tabindex="-1">
-      <noscript><p class="noscript" id="noscript">Browser analysis needs JavaScript. Nothing is uploaded. Or use <code>mavframe-dump capture.bin</code> from the repository.</p></noscript>
-
+      <p id="product-note" class="muted small" hidden></p>
+      <section id="screen-system" class="screen" aria-labelledby="h-system" hidden>
+        <h1 id="h-system" tabindex="-1">Health and metrics</h1>
+        <button type="button" id="refresh-system" class="btn">Refresh service data</button>
+        <p id="system-status" role="status" aria-live="polite"></p>
+        <ul id="system-checks" class="system-checks"></ul>
+        <dl id="system-values" class="metrics"></dl>
+        <p id="system-scope" class="muted small">HTTP serving process; browser parsing is not measured.</p>
+        <details class="box system-metrics"><summary>Prometheus metrics</summary><pre id="system-metrics">No metrics fetched.</pre></details>
+      </section>
+      <details id="quickstart" class="quickstart" hidden>
+        <summary>Quick start</summary>
+        <p id="quickstart-copy" class="muted small">Complete these steps using the actual workspace.</p>
+        <ol id="quickstart-steps"><li data-quick-step="0">Load the synthetic sample</li><li data-quick-step="1">Inspect a CRC/frame finding</li><li data-quick-step="2">Export the finding</li></ol>
+        <div class="quickstart-actions"><button type="button" id="quickstart-restart" class="btn">Restart checklist</button><button type="button" id="quickstart-dismiss" class="btn">Dismiss</button></div>
+      </details>
       <!-- Capture -->
       <section id="screen-capture" class="screen" aria-labelledby="h-capture">
         <h1 id="h-capture" tabindex="-1">Capture</h1>
-        <div class="toolbar" role="group" aria-label="Load a capture">
+        <div class="toolbar capture-toolbar" role="group" aria-label="Capture commands">
           <input type="file" id="file" class="file-input" accept=".tlog,.bin,.raw,.mavlink,application/octet-stream">
           <label for="file" class="btn primary">Open capture file</label>
-          <button type="button" id="load-sample" class="btn">Load synthetic sample</button>
+          <button type="button" id="load-sample" class="btn">Load sample</button>
           <span class="field">
             <label for="format">Format</label>
             <select id="format">
@@ -66,23 +176,37 @@
               <option value="raw">Raw byte stream</option>
             </select>
           </span>
+          <span class="capture-exports" role="group" aria-label="Export capture report">
+            <button type="button" class="btn" data-capture-export="json" disabled>Export JSON</button>
+            <button type="button" class="btn" data-capture-export="csv" disabled>Export CSV</button>
+            <button type="button" class="btn" data-capture-export="md" disabled>Export Markdown</button>
+            <button type="button" class="btn" id="print-report" disabled>Print report / Save PDF</button>
+            <button type="button" class="btn" id="share-report">Share report text</button>
+          </span>
         </div>
-        <p class="muted small">Files stay in this tab; nothing is uploaded.</p>
+        <details class="box custom-dialect-panel" id="custom-dialect-panel">
+          <summary>Custom message definitions</summary>
+          <p class="muted small">Pinned common and ArduPilotMega definitions are built in. Select one local entry dialect XML and the exact local XML files it names as includes; you can add includes before or after the entry file. DTDs and remote/path includes are rejected. Nothing is uploaded or saved.</p>
+          <div class="toolbar"><label for="custom-dialect-file">Dialect entry XML</label><input type="file" id="custom-dialect-file" accept=".xml,application/xml,text/xml"><label for="custom-dialect-includes">Referenced local include XML files</label><input type="file" id="custom-dialect-includes" accept=".xml,application/xml,text/xml" multiple><button type="button" class="btn" id="clear-custom-dialect" disabled>Clear custom dialect</button></div>
+          <p id="custom-dialect-name" class="muted small">No custom dialect loaded. Up to 1 MiB per file, 4 MiB combined, 8 include levels, 512 custom messages.</p>
+          <p id="custom-dialect-status" role="status" aria-live="polite"></p>
+        </details>
         <div class="status-row">
           <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
           <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
           <span id="progress-text" class="muted" hidden></span>
-          <button type="button" class="btn" id="cancel" hidden>Cancel</button>
+          <button type="button" class="btn" id="cancel" hidden>Cancel</button><button type="button" class="btn" id="offline-prepare">Prepare offline</button>
+          <p id="offline-status" class="muted small offline-status" role="status">Preparing offline assets…</p>
         </div>
-        <p id="offline-status" class="muted small" role="status">Preparing offline assets…</p>
-        <details class="box capture-tool" id="live-panel">
+        <div class="capture-tools">
+          <details class="box capture-tool" id="live-panel">
           <summary>Live radio</summary>
           <p class="muted small">Read-only; nothing is uploaded.</p>
           <div class="toolbar">
             <span class="field"><label for="serial-baud">Baud rate</label><select id="serial-baud"><option value="57600">57,600</option><option value="115200" selected>115,200</option><option value="230400">230,400</option><option value="460800">460,800</option><option value="921600">921,600</option></select></span>
             <button type="button" class="btn primary" id="connect-radio">Connect radio</button>
             <button type="button" class="btn" id="disconnect-radio" disabled>Disconnect radio</button>
-            <button type="button" class="btn" id="inspect-live" disabled>Stop and inspect retained bytes</button>
+            <button type="button" class="btn" id="inspect-live" disabled>Stop and inspect</button>
           </div>
           <p id="live-status" role="status" aria-live="polite">Checking Web Serial support…</p>
           <dl class="metrics live-metrics">
@@ -93,15 +217,15 @@
             <div><dt>Arrival rate</dt><dd id="live-rate">n/a</dd></div>
           </dl>
           <div class="table-wrap live-table" role="region" aria-label="Recent native parser events" tabindex="0"><table class="dense"><thead><tr><th scope="col">Offset</th><th scope="col">Sender</th><th scope="col">Message</th><th scope="col">Sequence</th><th scope="col">Result</th></tr></thead><tbody id="live-events"></tbody></table></div>
-        </details>
-        <details class="box capture-tool">
+          </details>
+          <details class="box capture-tool">
           <summary>Fuzz</summary>
-          <div class="toolbar"><button type="button" class="btn" id="run-fuzz">Run 1,000 fuzz iterations</button><button type="button" class="btn" id="cancel-fuzz" disabled>Cancel fuzz batch</button></div>
-          <p id="fuzz-status" role="status" aria-live="polite">Valid frame required. Seed: 0x5eed1234.</p>
-        </details>
+          <div class="toolbar"><button type="button" class="btn" id="run-fuzz">Run fuzz</button><button type="button" class="btn" id="cancel-fuzz" disabled>Cancel fuzz</button></div>
+          <p id="fuzz-status" role="status" aria-live="polite">Valid frame required. Bounded to 1,000 C/Wasm calls with seed 0x5eed1234.</p>
+          </details>
+        </div>
         <div id="capture-result" hidden>
           <p id="source" class="source"></p>
-          <h2 id="h-summary">Summary</h2>
           <dl class="metrics" id="metrics">
             <div><dt>Valid frames</dt><dd id="m-frames">–</dd></div>
             <div><dt>CRC failures</dt><dd id="m-crc">–</dd></div>
@@ -111,17 +235,8 @@
             <div><dt>Other rejects</dt><dd id="m-rejects">–</dd></div>
             <div><dt>Duration</dt><dd id="m-duration">–</dd></div>
           </dl>
-          <ul class="assumptions">
-            <li id="gap-assumptions">Gap estimates assume one fully observed channel per sender and in-order arrival. Routing, filtering or merged links can create apparent loss. <a href="https://mavlink.io/en/guide/packet_loss.html" target="_blank" rel="noopener">MAVLink packet-loss assumptions (opens in a new tab)</a>.</li>
-            <li>A CRC failure means the checksum did not match. An unsupported message id is not checked at all, so it is counted separately and never called corrupt.</li>
-            <li>Message signatures are shown as present but are not verified.</li>
-          </ul>
-          <p><a class="btn" id="view-frames" href="#/frames">View frames</a></p>
-          <div class="toolbar" role="group" aria-label="Export capture report">
-            <button type="button" class="btn" data-capture-export="json">Capture report (JSON)</button>
-            <button type="button" class="btn" data-capture-export="csv">Capture report (CSV)</button>
-            <button type="button" class="btn" data-capture-export="md">Capture report (Markdown)</button>
-          </div>
+          <p id="gap-assumptions" class="muted small capture-limitations">Gap estimates assume one fully observed channel and in-order arrival. CRC is not authentication; unsupported IDs are not CRC-checked.</p>
+          <p><a class="btn" id="view-frames" href="#/frames">Inspect frames</a></p>
           <p id="capture-export-status" class="muted small" role="status" aria-live="polite"></p>
           <h2 id="h-messages">Message types</h2>
           <div class="table-wrap" id="msg-region" role="region" aria-labelledby="h-messages" tabindex="0">
@@ -143,11 +258,10 @@
         <div id="frames-empty" class="empty" hidden></div>
         <div id="frames-body" hidden>
           <p class="counts" id="frames-counts"></p>
-          <p class="muted small" id="frames-assumptions">Gap counts assume one fully observed channel per sender and in-order arrival. Signatures are not verified.</p>
 
-          <section class="box timeline-box" aria-labelledby="h-timeline">
-            <div class="box-header bar">
-              <h2 id="h-timeline">Timeline</h2>
+          <details class="box timeline-box">
+            <summary>Timeline</summary>
+            <div class="timeline-content">
               <ul class="legend" aria-label="Timeline markers">
                 <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><path class="g-crc" d="M6 1 11 11H1Z"/></svg>CRC failure</li>
                 <li><svg class="glyph" viewBox="0 0 12 12" aria-hidden="true"><rect class="g-gap" x="2" y="2" width="8" height="8"/></svg>Sequence gap</li>
@@ -161,7 +275,15 @@
               <p id="timeline-cap" class="muted small cap-note" hidden></p>
               <div class="axis"><span id="axis-start"></span><span id="axis-unit" class="muted"></span><span id="axis-end"></span></div>
             </div>
-          </section>
+            <section class="link-health" aria-labelledby="link-health-title">
+              <h3 id="link-health-title">Link health by interval</h3>
+              <p id="link-health-axis" class="muted small"></p>
+              <div class="table-wrap link-health-table" role="region" aria-labelledby="link-health-title" tabindex="0">
+                <table class="dense"><caption>Retained frame intervals with parser failures, sender context and clock evidence. Select an interval to inspect its first retained frame.</caption><thead><tr><th scope="col">Interval / frame index</th><th scope="col">Valid</th><th scope="col">CRC</th><th scope="col">Unsupported</th><th scope="col">Sequence events</th><th scope="col">Missing estimate</th><th scope="col">Timestamp reversals</th><th scope="col">Sender IDs</th><th scope="col">Frames/s</th></tr></thead><tbody id="link-health-rows"></tbody></table>
+              </div>
+              <p id="link-health-limitations" class="muted small"></p>
+            </section>
+          </details>
 
           <div class="filters">
             <div class="chips" role="group" aria-label="Check status">
@@ -238,20 +360,22 @@
                 <li><span class="swatch seg-sig" aria-hidden="true">01</span>Signature</li>
                 <li><span class="swatch hl" aria-hidden="true">7f</span>Selected field</li>
               </ul>
-              <pre id="hex" class="hex" tabindex="0" aria-label="Bytes of the selected row" aria-describedby="hex-help">Select a row.</pre>
+              <pre id="hex" class="hex" role="group" tabindex="0" aria-label="Bytes of the selected row" aria-describedby="hex-help">Select a row.</pre>
               <p id="hex-help" class="muted small">Select a field to highlight its bytes, or click a byte to select its field. With the bytes focused, Left and Right arrows move between fields.</p>
             </div>
           </div>
           <p id="field-status" class="sr-only" role="status" aria-live="polite"></p>
           <div class="export" role="group" aria-label="Export and step">
-            <button type="button" class="btn primary" id="export-finding" aria-describedby="export-help">Export finding (JSON)</button>
-            <button type="button" class="btn" id="open-byte-editor">Mutate a copy</button>
+            <button type="button" class="btn primary" id="export-finding" aria-describedby="export-help">Export finding</button><button type="button" class="btn" id="share-finding" aria-describedby="share-help">Share finding</button>
+            <button type="button" class="btn" id="print-report-detail" disabled>Print report / Save PDF</button>
+            <button type="button" class="btn" id="open-byte-editor">Edit copy</button>
             <label class="check" for="include-payload"><input type="checkbox" id="include-payload">Include all payloads (may contain GPS)</label>
             <span class="step">
               <button type="button" class="btn" id="prev-row">Previous row</button>
               <button type="button" class="btn" id="next-row">Next row</button>
             </span>
             <p id="export-help" class="sr-only">Saves this row as JSON: mavframe version, file name, size and SHA-256, offsets, CRC wire vs computed and the parser's assumptions. All payload bytes are left out unless you include all payloads; they may contain GPS/position or other sensitive data. Header-only unsupported and bad-flags candidates cannot export a payload or CRC.</p>
+            <p id="share-help" class="sr-only">Share opens a preview of the finding text. It includes the capture name and selected finding; payload bytes appear only when you explicitly select Include all payloads.</p>
             <p id="export-status" class="small export-status" role="status" aria-live="polite"></p>
           </div>
         </div>
@@ -291,18 +415,15 @@
         <p><strong>Unsupported</strong>: the message id is outside the pinned common/ArduPilot definitions, so its CRC_EXTRA is unknown and the checksum cannot be checked. It may be a custom dialect or noise. These are never counted as corrupt. Full native candidate counters remain in capture reports; the .tlog presentation separately classifies timestamp artifacts and nested candidates.</p>
         <p><strong>Bad flags</strong>: incompat flags other than "signed", which this parser does not support.</p>
         <h2>Sequence gaps and the channel assumption</h2>
-        <p>For each sender the step between sequence numbers is read as in order (1), duplicate (0), a gap (2 to 128: about step − 1 frames missing) or a step back (a late frame when small, otherwise a likely sender restart). A gap is an estimate: it assumes one fully observed channel per sender and in-order arrival. A late frame, a router that drops or filters messages, or two merged links look the same.</p>
+        <p>For each sender, sequence steps are classified as in order (1), duplicate (0), gap (2 to 128: about step − 1 frames missing) or step back (late when small, otherwise likely sender restart). A gap is an estimate, not measured RF loss. It assumes one fully observed channel per sender and in-order arrival; a late frame, filtered route or merged links can look like loss. See <a href="https://mavlink.io/en/guide/packet_loss.html" target="_blank" rel="noopener">MAVLink packet-loss assumptions (opens in a new tab)</a>.</p>
         <h2>Signatures</h2>
         <p>Signed frames carry 13 extra bytes. The inspector shows them as "signature present; not verified": checking a signature needs the link's secret key, and the parser does not do it.</p>
         <h2>The bundled sample</h2>
         <p>The sample (<code>sample/sample-flight.tlog</code>) is synthetic, not a real flight. <code>tools/gen_sample_tlog.py</code> generates known CRC failures, sequence gaps and skipped bytes for exact-count tests; these values say nothing about a vehicle.</p>
         <h2>Finding export</h2>
         <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. All payload bytes are left out by default. The checkbox adds them when a full frame was retained; raw bytes may contain GPS/position or other sensitive data. Unsupported and bad-flags candidates retain only a header, so their payload and CRC are unavailable.</p>
-        <h2>Privacy and licences</h2>
-        <p>Files are read in this browser tab and never uploaded. Message definitions come from the official MAVLink XML (MIT, <a href="LICENSE-MAVLink.txt">notice</a>). Font: Atkinson Hyperlegible, SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">licence</a>).</p>
-        <h2>Custom dialects and team support</h2>
-        <p>The C library and inspector are MIT licensed, including commercial use. Private dialect integration and team support are separate, optional services.</p>
-        <button type="button" class="btn" id="open-team-options">Support options</button>
+        <h2>Privacy and license</h2>
+        <p>Files are read in this browser tab and never uploaded. All inspection and export tools are free. Coverage is measured against the pinned common + ArduPilotMega XML graph only; other dialects and hardware behavior are not claimed. See the <a href="dialect-coverage.json">machine-readable message/field coverage inventory</a>. The C library and inspector are MIT licensed; message definitions use the official MAVLink XML (<a href="LICENSE-MAVLink.txt">notice</a>). Atkinson Hyperlegible is under the SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
       </section>
 
       <!-- Not found -->
@@ -313,26 +434,41 @@
     </main>
   </div>
 </div>
+<section id="print-report-page" class="print-report-page" aria-labelledby="print-report-title" hidden></section>
 <dialog id="byte-editor-dialog" class="byte-editor-dialog" aria-labelledby="byte-editor-heading">
-  <h2 id="byte-editor-heading">Mutate a copy</h2>
+  <h2 id="byte-editor-heading">Edit copy</h2>
   <div class="byte-editor">
     <div class="toolbar">
       <span class="field"><label for="mutation-offset">Byte offset</label><input id="mutation-offset" type="number" min="0" step="1" value="0"></span>
       <span class="field"><label for="mutation-mask">Bit to flip</label><select id="mutation-mask"><option value="1">Bit 0 (1)</option><option value="2">Bit 1 (2)</option><option value="4">Bit 2 (4)</option><option value="8">Bit 3 (8)</option><option value="16">Bit 4 (16)</option><option value="32">Bit 5 (32)</option><option value="64">Bit 6 (64)</option><option value="128">Bit 7 (128)</option></select></span>
-      <button type="button" class="btn" id="mutate-byte">Flip bit and check copy</button>
+      <button type="button" class="btn" id="mutate-byte">Flip bit</button>
       <button type="button" class="btn" id="restore-capture">Restore original capture</button>
     </div>
     <p id="mutation-status" class="small" role="status" aria-live="polite"></p>
     <button type="button" class="btn" id="close-byte-editor">Close byte editor</button>
   </div>
 </dialog>
-<dialog id="team-options-dialog" class="byte-editor-dialog" aria-labelledby="team-options-heading" aria-describedby="team-options-description">
-  <h2 id="team-options-heading">Support options</h2>
-  <p id="team-options-description">MIT licensed; no paid commercial licence required.</p>
-  <p><strong>Proposed support: $49–$199 per engagement.</strong> Possible scope: private XML code generation, CI fixtures and integration support. Pricing is a hypothesis; no subscription, certification or hosted workspace is available.</p>
-  <p>No payment or email capture. Keep private XML, flight captures, credentials and personal contact details out of public requests.</p>
-  <p><a class="btn" id="team-request" href="https://github.com/anirudh763/mavframe/issues/new?title=Custom%20dialect%20support%20request&amp;body=Please%20describe%20the%20integration%20goal%20without%20private%20XML%2C%20flight%20data%20or%20credentials." target="_blank" rel="noopener noreferrer">Prepare public request</a></p>
-  <button type="button" class="btn" id="close-team-options">Close support options</button>
+<dialog id="install-dialog" class="pwa-dialog" aria-labelledby="install-title">
+  <h2 id="install-title">Add Mavframe to your Home Screen</h2>
+  <div id="install-instructions"><p>In Safari on iPhone or iPad:</p><ol><li>Open the Share menu.</li><li>Choose <strong>Add to Home Screen</strong>. Enable <strong>Open as Web App</strong> if shown.</li></ol><p>Browser menus vary by iOS version. If this option is missing, update iOS or open this page in Safari.</p></div>
+  <div class="dialog-actions"><button type="button" class="btn" id="dismiss-install">Not now</button><button type="button" class="btn primary" id="close-install">Close</button></div>
 </dialog>
+<dialog id="feedback-dialog" class="pwa-dialog" aria-labelledby="feedback-title">
+  <form id="feedback-form">
+    <h2 id="feedback-title">Send feedback</h2>
+    <p>Review the draft before opening the Mavframe GitHub issue form. The draft includes the browser version string and viewport shown below; route values are reduced to a screen name. Nothing is sent from this page.</p>
+    <label for="feedback-description">What happened?</label><textarea id="feedback-description" required maxlength="4000"></textarea>
+    <label for="feedback-steps">Reproduction steps (optional)</label><textarea id="feedback-steps" maxlength="4000"></textarea>
+    <details><summary>Diagnostic summary</summary><pre id="feedback-diagnostics"></pre></details>
+    <p id="feedback-status" role="status" aria-live="polite"></p><a id="feedback-destination" class="btn primary" href="#" target="_blank" rel="noopener" hidden>Open GitHub draft</a>
+    <div class="dialog-actions"><button type="button" class="btn" id="cancel-feedback">Cancel</button><button type="submit" class="btn primary">Prepare GitHub draft</button></div>
+  </form>
+</dialog>
+<dialog id="share-dialog" class="pwa-dialog share-dialog" aria-labelledby="share-title">
+  <h2 id="share-title">Review before sharing</h2><p id="share-disclosure">Review the exact text before sending it from this device.</p>
+  <pre id="share-preview" tabindex="0" aria-label="Finding text to share"></pre>
+  <p id="share-status" role="status" aria-live="polite"></p><div class="dialog-actions"><button type="button" class="btn" id="cancel-share">Cancel</button><button type="button" class="btn" id="copy-share">Copy text</button><button type="button" class="btn primary" id="confirm-share">Share</button></div>
+</dialog>
+<div id="update-notice" class="update-notice" role="status" aria-live="polite" hidden><span id="update-message">A new Mavframe version is ready.</span><button type="button" class="btn primary" id="accept-update">Update and reload</button><button type="button" class="btn" id="defer-update">Keep working</button></div>
 </body>
 </html>

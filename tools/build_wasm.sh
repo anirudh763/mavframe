@@ -20,7 +20,8 @@ echo "sources: $sources"
 
 exports=""
 for sym in mfw_reset mfw_input mfw_input_cap mfw_events mfw_event_cap mfw_event_count \
-           mfw_stats mfw_feed mfw_flush mfw_scratch mavframe_crc16 mavframe_crc_extra; do
+           mfw_stats mfw_feed mfw_flush mfw_scratch mfw_custom_extra_input mfw_custom_extra_capacity \
+           mfw_set_custom_extra_count mavframe_crc16 mavframe_crc_extra; do
     exports="$exports -Wl,--export=$sym"
 done
 

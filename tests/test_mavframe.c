@@ -186,6 +186,24 @@ static void test_crc_extra_table(void)
     CHECK(!mavframe_crc_extra(0xFFFFFFu, &extra));
 }
 
+static void test_custom_crc_extra_table(void)
+{
+    uint32_t pairs[] = {(60000U << 8) | 77U};
+    uint32_t bad[] = {(60000U << 8) | 77U, (0U << 8) | 50U};
+    uint8_t extra = 0, frame[MAVFRAME_MAX_FRAME], payload[2] = {0x34, 0x12};
+    size_t n, events;
+    CHECK(mavframe_set_custom_crc_extras(pairs, 1));
+    CHECK(mavframe_crc_extra(60000, &extra) && extra == 77);
+    n = build(frame, 60000, 9, payload, sizeof(payload), 0);
+    events = run_bytes(&p, frame, n, ev, 1);
+    CHECK(events == 1 && ev[0].st == MAVFRAME_FRAME);
+    CHECK(!mavframe_set_custom_crc_extras(bad, 2));
+    CHECK(mavframe_crc_extra(60000, &extra) && extra == 77); /* failed update is atomic */
+    CHECK(!mavframe_set_custom_crc_extras(pairs, 513));
+    CHECK(mavframe_set_custom_crc_extras(NULL, 0));
+    CHECK(!mavframe_crc_extra(60000, &extra));
+}
+
 static void test_heartbeat_fields(void)
 {
     /* A real HEARTBEAT frame as produced by pymavlink (sysid 1, compid 1, seq 0). */
@@ -591,6 +609,7 @@ int main(void)
 {
     test_crc_known_answer();
     test_crc_extra_table();
+    test_custom_crc_extra_table();
     test_heartbeat_fields();
     test_v1_and_mixed_stream();
     test_zero_length_payload();
