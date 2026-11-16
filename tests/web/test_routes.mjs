@@ -23,7 +23,8 @@ after(async () => {
 const openPage = (opts) => open(browser, base, opts);
 
 // The CSP shipped on origin/main; the rebuild must keep it (or make it stricter).
-const CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
+const SHIPPED_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
+const TEST_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'";
 
 const h1Text = (page) => page.evaluate(() => [...document.querySelectorAll("h1")].find((h) => h.offsetParent !== null)?.textContent.trim());
 const focusedH1 = (page) => page.evaluate(() => document.activeElement.tagName === "H1" ? document.activeElement.textContent.trim() : null);
@@ -42,14 +43,18 @@ async function screenHashes(page) {
   return SCREENS.map((s) => (s === "#/frames/DETAIL" ? href : s));
 }
 
-test("default screen is Capture with a sample load and the fixture labelled as an engineering fixture", async () => {
-  const page = await openPage();
-  assert.equal(await h1Text(page), "Capture");
-  assert.equal(await page.title(), "Capture – Mavframe");
-  assert.match(await page.textContent("#source"), /Synthetic sample/);
-  assert.match(await page.textContent("#source"), /not a real flight/);
-  assert.equal(await page.locator('nav[aria-label="Main"] a[aria-current="page"]').textContent(), "Capture");
-  assert.equal(await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', "content"), CSP, "CSP unchanged");
+test("the root is the product landing and does not auto-open a capture", async () => {
+  const page = await openPage({ hash: "#/", noWait: true });
+  assert.equal(await h1Text(page), "Trace a signal from frame to byte.");
+  assert.equal(await page.title(), "Mavframe · MAVLink capture inspection");
+  assert.equal(await page.locator("#screen-landing").isVisible(), true);
+  assert.equal(await page.locator("#workspace-shell").isVisible(), false);
+  assert.equal(await page.locator("#source").textContent(), "");
+  assert.equal(await page.locator(".landing-header").getByText("Pricing", { exact: true }).count(), 0);
+  assert.equal(await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', "content"), TEST_CSP, "the test-only policy allows only same-origin and loopback receivers");
+  const source = fs.readFileSync(path.join(DOCS, "index.html"), "utf8");
+  assert.ok(source.includes(`content="${SHIPPED_CSP}"`), "the shipped policy remains same-origin until a specific provider origin is configured");
+  assert.doesNotMatch(source, /connect-src[^"']*https:/, "no arbitrary HTTPS origin is enabled by default");
   assert.deepEqual(page.errors, []);
   await page.close();
 });
@@ -76,8 +81,9 @@ test("Frames shows actual rows: time, offset, message, sys:comp, seq and CRC sta
   await page.selectOption("#msg-filter", "30");
   await waitRoute(page, /msg=30/);
   assert.match(await page.textContent("#page-info"), new RegExp(`of ${truth.messages["30"].count + 1} rows`));
-  // Sequence-gap estimates carry their channel assumption on this screen.
-  assert.match(await page.textContent("#screen-frames"), /one fully observed channel/);
+  // Full sequence-gap methodology is in Help; the Frames header keeps only the measured counts.
+  await page.goto(base + "#/help");
+  assert.match(await page.textContent("#screen-help"), /one fully observed channel/);
   assert.deepEqual(page.errors, []);
   await page.close();
 });
@@ -89,7 +95,7 @@ test("CRC failure and unsupported message ids stay separate filters and labels",
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mavframe-routes-"));
   assert.equal(spawnSync("python3", [path.join(DOCS, "..", "tests/web/gen_cases.py"), dir]).status, 0);
   await page.setInputFiles("#file", path.join(dir, "malformed.bin"));
-  await page.waitForFunction(() => /^malformed.bin:/.test(document.getElementById("status").textContent) && !document.getElementById("load-sample").disabled);
+  await page.waitForFunction(() => document.getElementById("status").textContent === "malformed.bin loaded." && !document.getElementById("load-sample").disabled);
   await page.goto(base + "#/frames?check=unsupported");
   await page.waitForSelector("#frame-table tbody tr");
   const unsup = await page.$$eval("#frame-table tbody tr", (trs) => trs.map((tr) => tr.cells[0].textContent.trim()));
@@ -118,6 +124,9 @@ test("packet analyzer (1440 px): list, field tree and bytes side by side; field 
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-current")), "true", "focus stays on the selected row");
   assert.equal(await page.textContent("#detail-title"), `ATTITUDE at offset ${off.toLocaleString("en-US")}`);
   for (const sel of ["#frame-region", "#panel-header", "#panel-decoded", "#hex"]) assert.ok(await page.isVisible(sel), `${sel} visible`);
+  assert.equal(await page.getAttribute("#hex", "role"), "group");
+  assert.match(await page.getAttribute("#hex", "aria-label"), /^Bytes \d+ to \d+ in hexadecimal$/);
+  assert.equal(await page.getAttribute("#hex", "aria-describedby"), "hex-help");
   assert.equal(await page.isVisible("#tablist"), false, "no tabs when all panes fit");
   const hexFit = await page.$eval("#hex", (e) => [e.scrollWidth, e.clientWidth]);
   assert.ok(hexFit[0] <= hexFit[1], `hex rows (with ASCII) fit the pane: ${hexFit.join(" > ")}`);
@@ -167,6 +176,12 @@ test("packet analyzer at 1440x900: after a row click the tree shows all 8 header
       const T = box(document.querySelector(".tree-col"));
       const keys = ["stx", "len", "incompat", "compat", "seq", "sysid", "compid", "msgid"];
       const hdr = keys.map((k) => document.querySelector(`#panel-header .fieldbtn[data-key="${k}"]`));
+      const headerTables = [...document.querySelectorAll("#panel-header .header-field-grid .table-wrap")];
+      const headerContentOverflow = headerTables.flatMap((wrap) => [...wrap.querySelectorAll("th, td")].filter((cell) => {
+        const b = box(cell), r = box(wrap); return b.left < r.left - 0.5 || b.right > r.right + 0.5;
+      })).length;
+      const headerTextOverflow = [...document.querySelectorAll("#panel-header .header-field-grid .fieldbtn")]
+        .filter((button) => button.scrollWidth > button.clientWidth + 1 || button.scrollHeight > button.clientHeight + 1).length;
       const hex = document.getElementById("hex");
       const lh = parseFloat(getComputedStyle(hex).lineHeight);
       const view = { top: 0, left: 0, bottom: innerHeight, right: innerWidth };
@@ -174,6 +189,8 @@ test("packet analyzer at 1440x900: after a row click the tree shows all 8 header
       return {
         analyzer: document.body.classList.contains("analyzer-mode"),
         headerVisible: hdr.filter((b) => b && inside(box(b), T)).length,
+        headerContentOverflow,
+        headerTextOverflow,
         hexRowsCapacity: Math.floor((hex.clientHeight - 8) / lh), hexRows: hex.querySelectorAll(".off").length,
         hexInnerScroll: hex.scrollHeight > hex.clientHeight + 1, hexSideways: hex.scrollWidth > hex.clientWidth + 1,
         allLinesShown: [...hex.querySelectorAll(".off")].every((o) => inside(box(o), box(hex))),
@@ -185,6 +202,8 @@ test("packet analyzer at 1440x900: after a row click the tree shows all 8 header
     const where = `${query} row ${nth}`;
     assert.equal(r.analyzer, true, where);
     assert.equal(r.headerVisible, 8, `${where}: header fields fully visible in the tree (${r.headerVisible}/8)`);
+    assert.equal(r.headerContentOverflow, 0, `${where}: every header field cell, including Bytes, fits without clipping`);
+    assert.equal(r.headerTextOverflow, 0, `${where}: header field labels fit their touch targets without clipping`);
     assert.ok(r.hexRowsCapacity >= 8, `${where}: bytes pane holds ${r.hexRowsCapacity} rows`);
     assert.equal(r.hexInnerScroll, false, `${where}: no inner scroll for this frame's ${r.hexRows} rows`);
     assert.equal(r.hexSideways, false, `${where}: hex rows with ASCII fit`);
@@ -193,6 +212,44 @@ test("packet analyzer at 1440x900: after a row click the tree shows all 8 header
     assert.ok(r.page <= r.ih, `${where}: no page scrolling (${r.page})`);
     assert.ok(r.listRows >= 3, `${where}: ${r.listRows} list rows visible`);
     console.log(`# analyzer 1440x900 ${where}: header 8/8, bytes ${r.hexRows} rows (room for ${r.hexRowsCapacity}), ${r.listRows} list rows`);
+  }
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
+test("200% text at 1440x900 switches to a reachable frame list and sequential details", async () => {
+  const page = await openPage({ viewport: { width: 1440, height: 900 } });
+  for (const theme of ["light", "dark"]) {
+    if (theme === "dark") await page.locator("#theme-toggle").click();
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "32px";
+      location.hash = "#/frames";
+    });
+    await page.waitForSelector("#frame-table tbody tr a");
+    const layout = await page.evaluate(() => {
+      const region = document.getElementById("frame-region");
+      const first = document.querySelector("#frame-table tbody tr");
+      const r = region.getBoundingClientRect(), row = first.getBoundingClientRect();
+      return { analyzer: document.body.classList.contains("analyzer-mode"), height: region.clientHeight,
+        rowHeight: first.getBoundingClientRect().height, firstVisible: row.top >= r.top && row.bottom <= r.bottom,
+        rows: region.querySelectorAll("tbody tr").length, scrollable: region.scrollHeight > region.clientHeight };
+    });
+    assert.equal(layout.analyzer, false, `${theme}: enlarged text selects the sequential layout`);
+    assert.ok(layout.height >= layout.rowHeight, `${theme}: list is ${layout.height}px high for a ${layout.rowHeight}px row`);
+    assert.ok(layout.firstVisible, `${theme}: at least one complete row is visible`);
+    assert.ok(layout.rows > 0 && layout.scrollable, `${theme}: page rows remain reachable by local scrolling`);
+    await page.getByRole("button", { name: "CRC failed", exact: true }).click();
+    assert.equal(await page.getAttribute('[data-check="crc"]', "aria-pressed"), "true");
+    await page.locator("#frame-table tbody tr a").first().click();
+    await page.waitForFunction(() => document.title === "Frame details – Mavframe");
+    assert.equal(await page.isVisible("#back-link"), true);
+    assert.match(await page.getAttribute("#back-link", "href"), /check=crc/);
+    assert.equal(await page.isVisible("#tablist"), true);
+    await page.evaluate(() => { location.hash = "#/frames/0"; });
+    await page.waitForFunction(() => document.title === "Frame details – Mavframe");
+    assert.match(await page.textContent("#detail-title"), /at offset/);
+    await page.evaluate(() => { document.documentElement.style.fontSize = "16px"; location.hash = "#/frames?check=crc"; });
+    await page.waitForSelector("#frame-table tbody tr a");
   }
   assert.deepEqual(page.errors, []);
   await page.close();
@@ -455,6 +512,27 @@ test("gate 3: every route change moves focus to the H1 and sets the title", asyn
   await page.close();
 });
 
+test("header Log in and Create account actions focus the visible auth heading", async () => {
+  const page = await openPage({ hash: "#/", noWait: true });
+  for (const [action, title] of [
+    ["Log in", "Log in · Mavframe"],
+    ["Create account", "Create profile · Mavframe"],
+  ]) {
+    await page.goto(base + "#/");
+    await page.waitForFunction(() => document.title === "Mavframe · MAVLink capture inspection");
+    const link = page.locator(".landing-header").getByRole("link", { name: action, exact: true });
+    await link.click();
+    await page.waitForFunction((expected) => document.title === expected, title);
+    assert.equal(await page.locator("#screen-auth").isVisible(), true);
+    await page.waitForFunction(() => document.activeElement.id === "auth-title");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "auth-title");
+    assert.equal(await page.locator("#auth-title").getAttribute("tabindex"), "-1");
+    assert.equal(await page.locator("#auth-email").isVisible(), true);
+  }
+  assert.deepEqual(page.errors, []);
+  await page.close();
+});
+
 for (const width of [375, 1440]) {
   test(`gate 4: Back/Forward and deep links restore screen and state; old links still work (${width} px)`, async () => {
     const narrow = width < 1000;
@@ -505,13 +583,8 @@ for (const width of [375, 1440]) {
 
 for (const [theme, width] of [["light", 1280], ["dark", 1280], ["light", 320], ["dark", 320]]) {
   test(`gate 5: axe-core 0 violations on every primary screen (${theme}, ${width} px)`, async () => {
-    const page = await openPage({ viewport: { width, height: 900 } });
-    if (theme === "dark") {
-      if (width < 1000) await page.getByRole("button", { name: "Menu", exact: true }).click();
-      await page.getByRole("button", { name: "Dark theme" }).click();
-      if (width < 1000) await page.keyboard.press("Escape");
-      assert.equal(await page.getAttribute("html", "data-theme"), "dark");
-    }
+    const page = await openPage({ viewport: { width, height: 900 }, route: (p) => p.addInitScript((value) => localStorage.setItem("mavframe_theme_v1", value), theme) });
+    assert.equal(await page.getAttribute("html", "data-theme"), theme);
     let passes = 0;
     for (const hash of await screenHashes(page)) {
       await page.goto(base + hash);
@@ -536,42 +609,40 @@ for (const [theme, width] of [["light", 1280], ["dark", 1280], ["light", 320], [
   });
 }
 
-test("gate 6: light is the default even when the OS prefers dark; dark is an explicit, remembered choice", async () => {
+test("gate 6: sand is the default regardless of OS preference; dark is an explicit, remembered choice", async () => {
   const page = await openPage({ colorScheme: "dark" });
   const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  assert.equal(await bg(), "rgb(246, 245, 242)", "porcelain canvas #f6f5f2 under OS dark");
-  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector(".command-header")).backgroundColor), "rgb(255, 255, 255)");
+  assert.equal(await bg(), "rgb(246, 240, 228)");
   const toggle = page.locator('#theme-toggle');
   assert.equal(await toggle.getAttribute("aria-pressed"), "false");
   await toggle.click();
   assert.equal(await toggle.textContent(), 'Light theme');
   assert.equal(await toggle.getAttribute("aria-pressed"), "true");
-  assert.notEqual(await bg(), "rgb(246, 245, 242)");
+  assert.equal(await bg(), "rgb(27, 25, 22)");
   await page.reload();
   await waitParsed(page, "sample-flight.tlog");
   assert.equal(await page.getAttribute("html", "data-theme"), "dark", "choice remembered");
   await page.getByRole("button", { name: "Light theme" }).click();
   assert.equal(await toggle.textContent(), 'Dark theme');
-  assert.equal(await bg(), "rgb(246, 245, 242)");
-  // Blocked storage: still light, no errors.
+  assert.equal(await bg(), "rgb(246, 240, 228)");
   const blocked = await openPage({ colorScheme: "dark", route: (p) => p.addInitScript(() => {
     Object.defineProperty(window, "localStorage", { get() { throw new Error("blocked"); } });
   }) });
-  assert.equal(await blocked.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(246, 245, 242)");
+  assert.equal(await blocked.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(246, 240, 228)");
   await blocked.getByRole("button", { name: "Dark theme" }).click();
   assert.deepEqual(blocked.errors, []);
   await blocked.close();
   await page.close();
 });
 
-test("gate 7: no console errors or CSP violations across all routes; primary colour is #9a4300", async () => {
+test("gate 7: no console errors or CSP violations across all routes; primary colour is amber", async () => {
   const page = await openPage();
   for (const hash of await screenHashes(page)) {
     await page.goto(base + hash);
     await settle(page);
   }
   const primary = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--primary").trim());
-  assert.equal(primary.toLowerCase(), "#9a4300");
+  assert.equal(primary.toLowerCase(), "#8a4800");
   assert.deepEqual(await cspViolations(page), []);
   assert.deepEqual(page.errors, []);
   await page.close();

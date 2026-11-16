@@ -13,11 +13,12 @@ export const MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
 export const MAX_LISTED_FRAMES = 4000000;
 export const MAX_LISTED_ISSUES = 100000;
 const EVENT_SIZE = 16;
+let customMessages = Object.create(null);
 const TS_MIN_US = 946684800e6; // 2000-01-01
 const TS_MAX_US = 4102444800e6; // 2100-01-01
 
 export function messageName(msgid) {
-  return MESSAGE_NAMES[msgid] || null;
+  return customMessages[msgid]?.name || MESSAGE_NAMES[msgid] || null;
 }
 
 // Wrap an instantiated mavframe.wasm.
@@ -47,6 +48,12 @@ export function wrapParser(instance) {
       let crc = x.mavframe_crc16(0xffff, x.mfw_scratch(), n);
       crc = x.mavframe_crc16(crc, x.mfw_scratch() + 279, 1);
       return crc & 0xffff;
+    },
+    setCustomExtras(pairs = []) {
+      if (!ArrayBuffer.isView(pairs) || pairs.length > x.mfw_custom_extra_capacity()) return false;
+      const target = new Uint32Array(mem.buffer, x.mfw_custom_extra_input(), x.mfw_custom_extra_capacity());
+      target.fill(0); target.set(pairs);
+      return x.mfw_set_custom_extra_count(pairs.length) === 1;
     },
   };
 }
@@ -149,6 +156,11 @@ export function classifySeq(prev, seq) {
  */
 export async function analyze(bytes, opts = {}) {
   const parser = opts.parser;
+  const customDialect = opts.customDialect || null;
+  if (!parser?.setCustomExtras || !parser.setCustomExtras(customDialect?.pairs || new Uint32Array())) {
+    throw new Error('The custom dialect exceeds the parser limit or conflicts with a built-in message ID.');
+  }
+  customMessages = customDialect?.messages || Object.create(null);
   const format = opts.format || detectFormat(bytes, opts.name);
   const tlog = format === "tlog";
   const chunk = Math.min(opts.chunkSize || 512 * 1024, parser.inputCap);
@@ -483,7 +495,7 @@ const READERS = {
 };
 
 export function hasDecoder(msgid) {
-  return Object.prototype.hasOwnProperty.call(MESSAGES, msgid);
+  return Object.prototype.hasOwnProperty.call(customMessages, msgid) || Object.prototype.hasOwnProperty.call(MESSAGES, msgid);
 }
 
 // Decode a payload with the layout from the official XML. MAVLink v2 trims
@@ -491,7 +503,7 @@ export function hasDecoder(msgid) {
 // 64-bit integers come back as BigInt.
 export function decodePayload(msgid, payload, version = 2) {
   if (!hasDecoder(msgid)) return null;
-  const def = MESSAGES[msgid];
+  const def = customMessages[msgid] || MESSAGES[msgid];
   const full = new Uint8Array(Math.max(def.length, payload.length));
   full.set(payload);
   const v = new DataView(full.buffer);

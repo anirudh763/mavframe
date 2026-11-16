@@ -46,6 +46,7 @@ static uint8_t input_buf[INPUT_CAP];
 static mfw_event event_buf[EVENT_CAP];
 static uint32_t event_count;
 static uint8_t scratch_buf[MAVFRAME_MAX_FRAME];
+static uint32_t custom_extra_input[512];
 
 static void record(mavframe_status st)
 {
@@ -79,6 +80,9 @@ void mfw_reset(void)
 uint8_t *mfw_input(void) { return input_buf; }
 /* Room for one frame, so the UI can run mavframe_crc16() on a selected frame. */
 uint8_t *mfw_scratch(void) { return scratch_buf; }
+uint32_t *mfw_custom_extra_input(void) { return custom_extra_input; }
+uint32_t mfw_custom_extra_capacity(void) { return 512; }
+int32_t mfw_set_custom_extra_count(uint32_t count) { return mavframe_set_custom_crc_extras(custom_extra_input, count); }
 uint32_t mfw_input_cap(void) { return INPUT_CAP; }
 mfw_event *mfw_events(void) { return event_buf; }
 uint32_t mfw_event_cap(void) { return EVENT_CAP; }

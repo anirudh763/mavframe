@@ -13,6 +13,10 @@ source-compatible and gains protocol-version/header-length accessors.
   1,000-call C/Wasm fuzz worker and bounded read-only Web Serial capture.
 - Local offline application cache, dynamic theme action labels, native accessible
   dialogs and explicit MIT commercial-use/support wording.
+- Service-worker cache `mavframe-workbench-2026-11-15-10` includes the final
+  auth-heading focus target. Releases must advance the cache version whenever
+  shipped `docs/` assets change; updates stage a new cache and wait for an
+  explicit safe reload choice.
 - The unchanged synthetic sample now counts its existing v1 heartbeat: 1,497
   valid frames and 135 skipped bytes. Physical radio validation remains open.
 

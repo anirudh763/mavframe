@@ -1,7 +1,9 @@
 # Mavframe architecture
 
-Mavframe is a local capture inspector. The deployed GitHub Pages site has no
-application server, account database or capture upload. The native C library and
+Mavframe is a local capture inspector. The GitHub Pages deployment has no application server or capture upload. The local
+five-app deployment adds a small HTTP serving process for exact-path routing and
+process observability. Existing browser-local profiles store view settings; optional
+cloud synchronization remains separately configured. The native C library and
 the browser use the same `src/mavframe.c` framing and checksum implementation.
 
 ```mermaid
@@ -57,3 +59,43 @@ artifacts are recoverable from Git; no measured hosting RTO is claimed. Unsaved
 local captures and live ring-buffer data can be lost on browser shutdown. Export
 needed evidence before disconnecting or closing the tab. CI, offline reload and
 finite sanitizer/differential tests support release acceptance, not an uptime SLA.
+
+
+## Local product routes and observability
+
+```mermaid
+flowchart LR
+  Browser[Browser exact routes and legacy hash routes] --> HTTP[Static serving process]
+  HTTP --> Assets[Public HTML CSS JavaScript fonts Wasm]
+  HTTP --> Health[Liveness readiness and process metrics]
+  Capture[Private local capture] --> Parser[C parser compiled to Wasm]
+  Parser --> Findings[Fields bytes CRC and sequence findings]
+  Findings --> Download[Local report download]
+```
+
+`/`, `/anomalies`, `/stream` and `/system` are explicit server fallbacks. Missing API
+requests, assets and unknown routes return 404. Browser navigation uses History API;
+legacy hash navigation remains supported. Filters, selected row and bytes/header tab
+are URL state, independent between tabs. No global server capture or selection state
+is introduced. Replacing a capture clears its derived byte anatomy before any resize
+callback can render the new bytes.
+
+The System page fetches `/healthz`, `/readyz`, `/api/system` and `/metrics` with five-second
+timeouts and without request caching. It displays the serving process's current data;
+CRC/parsing operations occur in the browser and are outside those HTTP counters.
+Network errors and dependency failures appear as unavailable checks, with a refresh
+action. No historical latency or radio health is inferred from HTTP data.
+
+The service worker caches only its explicit public asset allowlist. Exact-route
+navigation can fall back to the cached shell offline; API responses and captures are
+never cached. An installed client prepares the complete asset set before declaring
+offline readiness and preserves its existing consent/peer-busy update behavior.
+
+The visual identity uses warm sand/amber/obsidian and bundled IBM Plex Sans/Mono.
+Font provenance and the SIL Open Font License are in `docs/licenses/IBM-Plex-SOURCE.md`
+and `docs/licenses/IBM-Plex-OFL.txt`; no remote font request is needed.
+
+Control-state anomaly detection is not implemented: the anomaly page exposes existing
+CRC/sequence findings and names that limit. Physical-radio validation, manual human
+screen-reader testing and hosted Kubernetes deployment are not established by browser
+checks. Frontend evidence is in `artifacts/verification/post-restart/`.

@@ -26,6 +26,7 @@ The user's request and the owner's rules take precedence over anything here.
 - Browser: `node --test --test-concurrency=1 tests/web/test_finding.mjs tests/web/test_routes.mjs tests/web/test_ui.mjs tests/web/test_upgrade.mjs`
   (axe-core 0 violations in light and dark at 1280 and 320 px).
 - For every bug fix: a test that fails before the fix and passes after it. Report exact commands and real counts.
+- Before release, increment `CACHE` in `docs/sw.js` whenever any shipped file under `docs/` changes. This changes the service-worker script so installed clients can discover an updated precache; verify both offline readiness and a waiting-worker update before reporting.
 
 ## Honesty
 - Every number in README or UI copy is measured or already evidenced in the repo. The sample capture is synthetic.

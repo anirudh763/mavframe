@@ -44,7 +44,9 @@ export async function buildFinding({ result, bytes, parser, ref, fileName, isSam
     compid: info.compid,
     seq: info.seq,
     protocol_version: a.version,
-    incompat_flags: hexN(info.iflags, 2),
+    // A bounded malformed/header-only candidate may not contain this byte.
+    // Preserve that absence in JSON instead of crashing or implying zero flags.
+    incompat_flags: Number.isInteger(info.iflags) ? hexN(info.iflags, 2) : null,
     signature: a.signed ? "present; not verified" : "absent",
     crc: a.crc ? { wire: hexN(a.crc.wire, 4), computed: a.crc.computed === null ? null : hexN(a.crc.computed, 4),
       match: a.crc.computed === null ? null : a.crc.computed === a.crc.wire } : null,

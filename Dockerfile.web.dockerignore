@@ -1,0 +1,12 @@
+**
+!Dockerfile.web
+!requirements-web.txt
+!tools/
+!tools/http_server.py
+!docs/
+!docs/**
+docs/**/*.key
+docs/**/*.pem
+docs/**/.env*
+docs/**/node_modules
+docs/**/artifacts

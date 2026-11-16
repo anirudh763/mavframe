@@ -17,18 +17,25 @@ export const AXE_SOURCE = fs.readFileSync(AXE, "utf8");
 export const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"];
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".wasm": "application/wasm",
-  ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain" };
+  ".woff2": "font/woff2", ".tlog": "application/octet-stream", ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain", ".md": "text/plain", ".sql": "text/plain", ".json": "application/json", ".webmanifest": "application/manifest+json" };
 
 export async function startServer() {
   const server = http.createServer((req, res) => {
-    const rel = decodeURIComponent(new URL(req.url, "http://x").pathname).replace(/^\/+/, "") || "index.html";
+    const pathname = new URL(req.url, "http://x").pathname;
+    const rel = ["/", "/anomalies", "/stream", "/system"].includes(pathname) ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
     const file = path.resolve(DOCS, rel);
     if (!file.startsWith(DOCS + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       res.writeHead(404).end();
       return;
     }
     res.writeHead(200, { "content-type": TYPES[path.extname(file)] || "application/octet-stream" });
-    fs.createReadStream(file).pipe(res);
+    if (path.resolve(file) === path.resolve(DOCS, "index.html")) {
+      // Only the local browser harness talks to its loopback test receivers.
+      // The shipped CSP stays same-origin until an owner allowlists one exact
+      // HTTPS provider origin in their built/static configuration.
+      const html = fs.readFileSync(file, "utf8").replace("connect-src 'self';", "connect-src 'self' http://localhost:* http://127.0.0.1:*;");
+      res.end(html);
+    } else fs.createReadStream(file).pipe(res);
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return { server, base: `http://127.0.0.1:${server.address().port}/` };
@@ -37,7 +44,7 @@ export async function startServer() {
 export function waitParsed(page, name, timeout = 30000) {
   return page.waitForFunction((n) => {
     const s = document.getElementById("status").textContent;
-    return s.startsWith(n + ":") && /valid frames/.test(s) && !document.getElementById("load-sample").disabled;
+    return s === `${n} loaded.` && !document.getElementById("load-sample").disabled;
   }, name, { timeout });
 }
 
@@ -46,7 +53,7 @@ export async function openPage(browser, base, opts = {}) {
   const { hash, route, noWait, ...ctx } = opts;
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block', ...ctx });
   const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("pageerror", (e) => errors.push(e.stack || String(e)));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
   page.errors = errors;
   page.setDefaultTimeout(15000);
@@ -55,7 +62,9 @@ export async function openPage(browser, base, opts = {}) {
     window.__csp = [];
     document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
   });
-  await page.goto(base + (hash || ""));
+  // Existing workflow suites intentionally start in the inspector. The root
+  // landing route has its own tests and passes hash="#/" explicitly.
+  await page.goto(base + (hash || "#/capture"));
   if (!noWait) await waitParsed(page, "sample-flight.tlog");
   return page;
 }

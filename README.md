@@ -2,8 +2,7 @@
 
 [![CI](https://github.com/anirudh763/mavframe/actions/workflows/ci.yml/badge.svg)](https://github.com/anirudh763/mavframe/actions)
 
-A link-quality view of a .tlog: CRC errors and sequence gaps per sender; not a
-flight plotter.
+Mavframe helps engineers inspect MAVLink captures without uploading flight logs. It locates checksum failures and sequence discontinuities so a suspect packet can be traced to its fields and bytes. Local reports preserve the evidence needed to investigate a link while omitting raw payloads by default.
 
 mavframe is a dependency-free C99 parser for mixed MAVLink v1/v2 telemetry frames, the
 protocol drones use to talk to ground stations. It is written in a firmware
@@ -20,6 +19,42 @@ has been tested yet.
 Status: beta (0.1.0), maintained by one student, best effort. Native/Wasm tests cover Linux and macOS;
 physical-radio and microcontroller validation remain outstanding. Security reports and the supported scope:
 [SECURITY.md](SECURITY.md).
+
+## Browser routes
+
+The local serving process exposes these exact URLs; existing `#/capture`, `#/frames`,
+`#/frames/<row>`, `#/help` and public/profile hash URLs remain available for Pages and installed clients.
+
+| URL | Working capability |
+|---|---|
+| `/` | Local MAVLink frame decoder, files, samples and reports |
+| `/anomalies` | Existing parser CRC, unsupported-message and sequence findings |
+| `/stream` | Selected packet fields, hex bytes and wire/computed checksum comparison |
+| `/system` | Live liveness, readiness, HTTP counters and Prometheus data |
+
+`/anomalies` does not implement control-state anomaly detection. Sequence-gap estimates
+assume one fully observed channel and in-order arrival; CRC is not authentication.
+Shareable filter/row/tab state is in the URL. Capture bytes remain in the current tab.
+The synthetic sample loads for guest inspection; opening a local file replaces that sample.
+
+The exact paths use `tools/http_server.py`, whose only Python dependency is pinned
+in `requirements-web.txt`. A plain static host
+can keep using hash URLs; `/system` reports unavailable services where those endpoints
+are absent. See the [runtime verification summary](docs/verification/runtime.md)
+for the focused server checks and portable setup. The native CLI quickstart is preserved below.
+
+## Three-command browser quickstart
+
+Prerequisites: Python 3.11+ with venv/pip and a modern browser. From this repository:
+
+```sh
+python3 -m venv /tmp/mavframe-web
+/tmp/mavframe-web/bin/python -m pip install -r requirements-web.txt
+/tmp/mavframe-web/bin/python tools/http_server.py --root docs --app mavframe --port 3003
+```
+
+Open [Mavframe](http://127.0.0.1:3003/). Stop the foreground server with Ctrl+C.
+Verification used a separate temporary venv and port 3013 to preserve the five-app run.
 
 ## Quick start
 
@@ -508,3 +543,5 @@ Built with AI assistance (Claude and Codex). Measurements are tied to the named 
 
 MIT, see `LICENSE`. Security reports: `SECURITY.md`. Contributing:
 `CONTRIBUTING.md`.
+
+Local verification: [2026-11-15 checks and limits](docs/verification/release-2026-11-15.md).

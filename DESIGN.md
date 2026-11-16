@@ -108,3 +108,24 @@ state MIT rights and proposed services without pretending there is checkout or e
 Navigation uses three pinned Lucide glyphs (capture file, scan frames, reference book)
 to distinguish actual destinations; adjacent labels supply their accessible names.
 There are no decorative numbered navigation prefixes. Theme text names the next action.
+
+
+## November 15 exact-path product routes
+
+The post-restart brief supersedes the old navy/cyan theme and typography: warm sand
+`#f6f0e4`, pale surface `#fffcf5`, amber action `#8a4800`, obsidian text `#252018`,
+with IBM Plex Sans for controls and IBM Plex Mono for packet data. Light is the default;
+the explicit remembered dark theme uses obsidian surfaces and `#ffc267` actions.
+The existing linked frame list / field tree / bytes composition remains the central
+instrument. Avoid marketing heroes or a generic metrics-card dashboard on these routes.
+
+Exact paths `/`, `/anomalies`, `/stream`, `/system` enter decoder, findings, selected
+packet comparison and live service checks. Legacy `#/` still opens the public landing,
+and existing hash/profile workflows retain their routes. Product navigation stays visible
+at mobile widths; tables retain their named scrolling regions. Route-specific filters,
+row selection and tab state remain in query parameters. Anomaly claims are limited to
+the existing parser; control-state analysis is explicitly unavailable.
+
+Local UI/UX Pro Max searches are preserved under `artifacts/verification/post-restart/`.
+The narrower search matched Data-Dense Dashboard; its unrelated enterprise marketing,
+blue palette and Fira recommendations were rejected in favor of the user's exact brief.

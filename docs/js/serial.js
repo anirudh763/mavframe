@@ -30,8 +30,8 @@ function parserWorker(progress = () => {}) {
   };
 }
 
-export function wireSerial({ inspectCapture, selectedFrame }) {
-  let session = null, opening = false, closing = null, fuzz = null, renderTimer = null;
+export function wireSerial({ inspectCapture, selectedFrame, customExtras = () => [] }) {
+  let session = null, opening = false, closing = null, fuzz = null, fuzzEpoch = 0, renderTimer = null;
   let summary = null, retained = null;
   const status = text => { $('live-status').textContent = text; };
   const supported = window.isSecureContext && !!navigator.serial?.requestPort;
@@ -118,7 +118,7 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
       await port.open({ baudRate, bufferSize: 65536 });
       if (!port.readable) throw new Error('The selected port has no readable stream.');
       rpc = parserWorker();
-      show(await rpc.request('start'));
+      show(await rpc.request('start', { customPairs: Array.from(customExtras()) }));
       retained = null;
       const current = { port, rpc, reader: port.readable.getReader(), stopping: false, problem: '' };
       session = current;
@@ -142,13 +142,18 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
     if (fuzz) return;
     const frame = selectedFrame();
     if (!frame) { $('fuzz-status').textContent = 'Load a capture with a valid frame before running this finite fuzz batch.'; return; }
-    const current = parserWorker(count => { $('fuzz-status').textContent = `C/Wasm calls completed: ${count} / 1,000`; });
+    const epoch = ++fuzzEpoch;
+    const extras = Array.from(customExtras());
+    const current = parserWorker(count => { if (epoch === fuzzEpoch) $('fuzz-status').textContent = `C/Wasm calls completed: ${count} / 1,000`; });
     fuzz = current; $('run-fuzz').disabled = true; $('cancel-fuzz').disabled = false;
     try {
-      const result = await current.request('fuzz', { frame: frame.buffer }, [frame.buffer]);
-      $('fuzz-status').textContent = `${result.calls} actual C/Wasm calls in ${result.elapsed_ms.toFixed(1)} ms; ${result.frames} valid, ${result.bad_crc} CRC candidates rejected, ${result.unknown_msgid} unknown IDs, ${result.bad_flags} unsupported flags. Seed ${result.seed}. No trap observed in this finite batch; not a security certification.`;
-    } catch (error) { $('fuzz-status').textContent = error.name === 'AbortError' ? 'Fuzz batch cancelled; worker terminated.' : `Fuzz batch failed: ${error.message}`; }
-    finally { current.close(); fuzz = null; $('run-fuzz').disabled = false; $('cancel-fuzz').disabled = true; }
+      const result = await current.request('fuzz', { frame: frame.buffer, customPairs: extras }, [frame.buffer]);
+      if (epoch === fuzzEpoch) $('fuzz-status').textContent = `${result.calls} actual C/Wasm calls in ${result.elapsed_ms.toFixed(1)} ms; ${result.frames} valid, ${result.bad_crc} CRC candidates rejected, ${result.unknown_msgid} unknown IDs, ${result.bad_flags} unsupported flags. Seed ${result.seed}. No trap observed in this finite batch; not a security certification.`;
+    } catch (error) { if (epoch === fuzzEpoch) $('fuzz-status').textContent = error.name === 'AbortError' ? 'Fuzz batch cancelled; worker terminated.' : `Fuzz batch failed: ${error.message}`; }
+    finally {
+      current.close();
+      if (epoch === fuzzEpoch) { fuzz = null; $('run-fuzz').disabled = false; $('cancel-fuzz').disabled = true; }
+    }
   });
   $('cancel-fuzz').addEventListener('click', () => fuzz?.close());
   window.addEventListener('pagehide', () => {
@@ -163,4 +168,17 @@ export function wireSerial({ inspectCapture, selectedFrame }) {
       status('Radio disconnected when leaving this page.');
     }
   });
+  return {
+    async clearForLogout() {
+      fuzzEpoch++; fuzz?.close(); fuzz = null;
+      $('run-fuzz').disabled = false; $('cancel-fuzz').disabled = true; $('fuzz-status').textContent = 'Fuzz run cleared when leaving this session.';
+      retained = null; summary = null;
+      if (renderTimer) clearTimeout(renderTimer);
+      renderTimer = null;
+      for (const id of ['live-bytes', 'live-frames', 'live-crc', 'live-gaps', 'live-unsupported', 'live-rejected', 'live-retained', 'live-discarded']) $(id).textContent = '0';
+      $('live-rate').textContent = 'n/a'; $('live-events').replaceChildren();
+      if (session) { await stop(false); retained = null; summary = null; $('live-events').replaceChildren(); }
+      else { $('live-status').textContent = supported ? 'Choose a USB telemetry radio.' : 'Web Serial needs a secure context and supported desktop browser. Use Open capture file.'; controls(); }
+    },
+  };
 }
