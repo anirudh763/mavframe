@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Mavframe — MAVLink packet inspection</title>
 <meta name="description" content="Local MAVLink v1/v2 capture analysis, frame decoding and reports.">
 <link rel="canonical" href="https://anirudh763.github.io/mavframe/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Mavframe">
 <meta property="og:title" content="Mavframe — MAVLink packet inspection">
-<meta property="og:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Runs in your browser; no capture upload.">
+<meta property="og:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Parsing runs locally; server saves upload only by explicit action.">
 <meta property="og:url" content="https://anirudh763.github.io/mavframe/">
 <meta property="og:image" content="https://anirudh763.github.io/mavframe/og-card.png">
 <meta property="og:image:secure_url" content="https://anirudh763.github.io/mavframe/og-card.png">
@@ -20,7 +20,7 @@
 <meta property="og:image:alt" content="Mavframe packet inspector showing a synthetic ATTITUDE frame with a received CRC that differs from the C parser calculation.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Mavframe — MAVLink packet inspection">
-<meta name="twitter:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Runs in your browser; no capture upload.">
+<meta name="twitter:description" content="Inspect local MAVLink v1/v2 captures, compare frame fields and bytes, and export findings. Parsing runs locally; server saves upload only by explicit action.">
 <meta name="twitter:image" content="https://anirudh763.github.io/mavframe/og-card.png">
 <meta name="twitter:image:alt" content="Mavframe packet inspector showing a synthetic ATTITUDE frame with a received CRC that differs from the C parser calculation.">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Mavframe","applicationCategory":"DeveloperApplication","applicationSubCategory":"MAVLink capture inspector","operatingSystem":"Any device with a modern browser; Web Serial requires a supported secure desktop browser","url":"https://anirudh763.github.io/mavframe/","description":"Free, local browser analysis of MAVLink v1/v2 raw streams and .tlog captures, frame decoding, CRC comparison and reports. CRC does not authenticate signatures; the browser does not verify signatures.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"softwareVersion":"1.0.0"}</script>
@@ -35,8 +35,10 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="css/ui.css">
 <link rel="stylesheet" href="css/inspector.css">
+<link rel="stylesheet" href="css/workspace-ui.css">
 <script src="js/theme.js"></script>
 <script src="js/team-config.js"></script>
+<script src="js/workspace-ui.js" defer></script>
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -50,7 +52,7 @@
    <details class="mega"><summary>Use cases</summary><div class="mega-panel"><a href="#/app/frames?check=crc"><strong>Find a bad checksum</strong><span>Open CRC failures in the frame list.</span></a><a href="#/app/frames?check=issues"><strong>Review a sequence gap</strong><span>Inspect parser findings and assumptions.</span></a></div></details>
    <details class="mega"><summary>How it works</summary><div class="mega-panel"><a href="#how-it-works"><strong>Local parsing</strong><span>Capture bytes are analyzed in this browser.</span></a><a href="#how-it-works"><strong>Reproducible evidence</strong><span>Export offsets, checksum values and parser context.</span></a></div></details>
    <details class="mega"><summary>Format and docs</summary><div class="mega-panel"><a href="#/app/help"><strong>Formats and limits</strong><span>Supported MAVLink versions and dialect scope.</span></a><a href="https://github.com/anirudh763/mavframe" target="_blank" rel="noopener"><strong>Source code</strong><span>MIT-licensed parser and browser inspector.</span></a></div></details>
-   <details class="mega suite-menu"><summary>More tools</summary><div class="mega-panel"><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener"><strong>FlightSeal</strong><span>Seal raw PX4 .ulg files; Mavframe captures are not transferred.</span></a><a href="https://anirudh763.github.io/mavframe/" aria-current="page"><strong>Mavframe</strong><span>MAVLink capture inspection.</span></a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener"><strong>CueReport</strong><span>Accessibility issue reporting.</span></a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener"><strong>Issue Warehouse</strong><span>Explore public accessibility reports.</span></a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener"><strong>Portfolio</strong><span>Project hub.</span></a><span class="suite-unavailable" aria-disabled="true"><strong>LeaseQ</strong><span>Deployment unavailable (HTTP 404 checked 2026-11-15).</span></span></div></details>
+   <details class="mega suite-menu"><summary>Other apps</summary><div class="mega-panel"><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener"><strong>FlightSeal</strong><span>Seal raw PX4 .ulg files; Mavframe captures are not transferred.</span></a><a href="https://anirudh763.github.io/mavframe/" aria-current="page"><strong>Mavframe</strong><span>MAVLink capture inspection.</span></a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener"><strong>CueReport</strong><span>Accessibility issue reporting.</span></a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener"><strong>Issue Warehouse</strong><span>Explore public accessibility reports.</span></a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener"><strong>Portfolio</strong><span>Project hub.</span></a><span class="suite-unavailable" aria-disabled="true"><strong>LeaseQ</strong><span>Deployment unavailable (HTTP 404 checked 2026-11-15).</span></span></div></details>
   </nav>
   <div class="landing-actions"><button type="button" class="btn pwa-install" id="install-action" hidden>Install app</button><button type="button" class="btn pwa-help" id="install-help" hidden>Install help</button><a href="#/login" data-auth-route="login">Log in</a><a class="btn primary" href="#/signup" data-auth-route="signup">Create account</a><a class="btn" href="#/app" data-launch-workspace>Launch Workspace</a><details id="public-account" class="public-account" hidden><summary id="public-account-label">Profile</summary><div><a href="#/profile">Profile</a><a href="#/saved">Saved workspaces</a><button type="button" data-logout>Log out</button></div></details></div>
   <button type="button" id="landing-menu" class="btn landing-menu" aria-expanded="false" aria-controls="landing-nav">Menu</button>
@@ -108,24 +110,25 @@
   <div id="sheet" class="rail">
    <div class="rail-inner">
     <div class="wordmark">
-      <a class="brand" href="#/">Mavframe</a>
+      <a class="brand" href="/overview" data-canonical="overview">Mavframe</a>
     </div>
     <button type="button" class="btn sheet-only" id="sheet-close">Close menu</button>
-    <nav aria-label="Main" class="nav">
-      <ul>
-        <li><a href="#/capture" data-route="capture">Capture</a></li>
-        <li><a href="#/frames" data-route="frames">Frames</a></li>
-        <li><a href="#/help" data-route="help">Format help</a></li>
-      </ul>
-    </nav>
-    <details class="workspace-suite"><summary>More tools</summary><div><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener">FlightSeal — open console</a><a href="https://anirudh763.github.io/mavframe/" aria-current="page">Mavframe — this tool</a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener">CueReport — accessibility reports</a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener">Issue Warehouse — public reports</a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener">Portfolio — project hub</a><span aria-disabled="true">LeaseQ — deployment unavailable (HTTP 404 checked 2026-11-15)</span></div></details>
+    <nav aria-label="Main" class="nav canonical-nav"><ul>
+      <li><a href="/overview" data-canonical="overview" data-icon="book-open">Overview</a></li>
+      <li><a href="/workbench" data-canonical="workbench" data-icon="scan-line">Workbench</a></li>
+      <li><a href="/reports" data-canonical="reports" data-icon="file-search">Reports</a></li>
+      <li><a href="/settings" data-canonical="settings" data-icon="book-open">Settings</a></li>
+    </ul></nav>
+    <details class="workspace-suite"><summary>Other apps</summary><div><a href="https://anirudh763.github.io/flightseal/console/" target="_blank" rel="noopener">FlightSeal — open console</a><a href="https://anirudh763.github.io/mavframe/" aria-current="page">Mavframe — this tool</a><a href="https://anirudh763.github.io/talkback-triage-pilot/" target="_blank" rel="noopener">CueReport — accessibility reports</a><a href="https://anirudh763.github.io/a11y-issue-warehouse/" target="_blank" rel="noopener">Issue Warehouse — public reports</a><a href="https://anirudh763.github.io/portfolio/" target="_blank" rel="noopener">Portfolio — project hub</a><span aria-disabled="true">LeaseQ — deployment unavailable (HTTP 404 checked 2026-11-15)</span></div></details>
     <div class="rail-foot">
-      <button type="button" class="btn" id="theme-toggle" aria-pressed="false">Dark theme</button>
+      <details class="support-tools"><summary>App and support</summary><div class="support-panel">
       <button type="button" class="btn pwa-install" data-install-action hidden>Install app</button><button type="button" class="btn pwa-help" data-install-help hidden>Install help</button>
-      <details class="account-menu" id="account-menu"><summary id="account-label">Guest session</summary><div><a href="#/profile" id="profile-link">Profile</a><a href="#/saved" id="saved-link">Saved workspaces</a><button type="button" id="logout-button">Log out</button></div></details>
-      <button type="button" class="btn" data-open-feedback>Send feedback</button>
+<button type="button" class="btn" id="offline-prepare">Prepare offline</button>          <p id="offline-status" class="muted small offline-status" role="status">Preparing offline assets…</p>      <button type="button" class="btn" data-open-feedback>Send feedback</button>
       <a href="trust.html#privacy">Privacy</a><a href="trust.html#terms">Terms</a><a href="trust.html#security">Security &amp; offline</a>
       <a href="https://github.com/anirudh763/mavframe" target="_blank" rel="noopener">Source on GitHub</a>
+      </div></details>
+      <button type="button" class="btn" id="theme-toggle" aria-pressed="false">Dark theme</button>
+      <details class="account-menu" id="account-menu"><summary id="account-label">Guest session</summary><div><a href="#/profile" id="profile-link">Profile</a><a href="#/saved" id="saved-link">Saved workspaces</a><button type="button" id="logout-button">Log out</button></div></details>
     </div>
    </div>
   </div>
@@ -138,14 +141,58 @@
       <span class="mobile-brand">Mavframe</span>
       <a class="back" id="back-link" href="#/frames" hidden>← Back</a>
       <nav aria-label="Breadcrumb" class="crumbs"><ol id="crumbs"><li>Mavframe</li><li aria-current="page">Capture</li></ol></nav>
-      <nav class="workspace-actions" aria-label="Account and workspace"><a href="#/login" data-auth-route="login">Log in</a><a href="#/signup" data-auth-route="signup">Create account</a><a class="btn" href="#/app" data-launch-workspace>Launch Workspace</a><a id="save-profile-link" href="#/signup" data-save-profile>Save to profile</a><details id="workspace-account" class="public-account" hidden><summary id="workspace-account-label">Profile</summary><div><a href="#/profile">Profile</a><a href="#/saved">Saved workspaces</a><button type="button" data-logout>Log out</button></div></details></nav>
+      <nav class="workspace-actions" aria-label="Account and workspace"><a href="#/login" data-auth-route="login">Log in</a><a href="#/signup" data-auth-route="signup">Create account</a><a id="save-profile-link" href="#/signup" data-save-profile>Save to profile</a><details id="workspace-account" class="public-account" hidden><summary id="workspace-account-label">Profile</summary><div><a href="#/profile">Profile</a><a href="#/saved">Saved workspaces</a><button type="button" data-logout>Log out</button></div></details></nav>
     </div>
 
-    <nav class="product-nav" aria-label="Inspection pages">
-      <a href="/" data-product-route="decoder">Decoder</a><a href="/anomalies" data-product-route="anomalies">Anomalies</a><a href="/stream" data-product-route="stream">Stream</a><a href="/system" data-product-route="system">System</a>
+    <nav class="product-nav" aria-label="Inspection tools">
+      <a href="/workbench" data-context="capture">Capture</a><a href="#/frames" data-context="frames">Frames</a><a href="/anomalies" data-product-route="anomalies">Anomalies</a><a href="/stream" data-product-route="stream">Packet bytes</a><a href="#/help" data-context="help">Format help</a>
     </nav>
     <main id="workspace" tabindex="-1">
+      <section id="screen-overview" class="screen" aria-labelledby="h-overview" hidden>
+        <h1 id="h-overview" tabindex="-1">Overview</h1>
+        <p>Decode MAVLink captures, inspect packet bytes and export protocol findings.</p>
+        <div class="overview-actions"><a href="/workbench" data-canonical="workbench" class="btn primary">Open capture</a><button type="button" id="overview-demo" class="btn">Run synthetic demo</button></div>
+        <h2>Current capture</h2><p id="overview-empty">No capture loaded.</p><dl id="overview-values" class="metrics"></dl>
+        <server-workspace view="overview"></server-workspace>
+        <div class="overview-links"><a href="/workbench" data-canonical="workbench">Decode and inspect packets</a><a href="/reports" data-canonical="reports">Reports and saved runs</a><a href="/settings" data-canonical="settings">Account and service settings</a></div>
+      </section>
+      <section id="screen-reports" class="screen" aria-labelledby="h-reports" hidden>
+        <h1 id="h-reports" tabindex="-1">Reports</h1><p id="reports-current">Load a capture in Workbench to export a report.</p>
+        <div id="reports-exports"></div><p class="muted small">Capture reports omit raw payloads. Saving a run explicitly uploads its capture bytes and custom definitions to this server (32 MiB per artifact).</p>
+        <server-workspace view="reports"></server-workspace>
+        <a href="#/frames?check=issues">Inspect current protocol findings</a>
+      </section>
+      <section id="screen-settings" class="screen" aria-labelledby="h-settings" hidden>
+        <h1 id="h-settings" tabindex="-1">Settings</h1>
+        <server-workspace view="settings"></server-workspace>
+        <details class="settings-tools"><summary>Service diagnostics</summary><div id="settings-diagnostics"></div></details>
+        <details class="settings-tools"><summary>Browser profile and offline tools</summary><p>Browser profiles and encrypted backups are separate from server accounts.</p><a href="#/profile">Browser profile and backup</a><a href="#/saved">Browser saved workspaces</a><button type="button" id="settings-offline" class="btn">Prepare offline assets</button><button type="button" id="settings-theme" class="btn">Toggle theme</button></details>
+      </section>
       <p id="product-note" class="muted small" hidden></p>
+      <details id="scenario-drawer" class="scenario-drawer" hidden><summary>Sample scenarios</summary></details>
+      <section id="scenario-panel" class="box scenario-panel" aria-labelledby="scenario-title" hidden>
+        <h2 id="scenario-title">Try a packet scenario</h2>
+        <p>Decode MAVLink telemetry and review checksum errors or unusual changes.</p>
+        <div class="toolbar">
+          <span class="field"><label for="scenario-select">Synthetic scenario</label><select id="scenario-select"></select></span>
+          <button type="button" id="run-scenario" class="btn primary">Run Interactive Demo</button>
+          <button type="button" id="reset-scenario" class="btn">Reset demo</button>
+        </div>
+        <p id="scenario-preview" class="muted small"></p>
+        <p id="scenario-status" role="status" aria-live="polite"></p>
+        <details id="scenario-guide"><summary>Scenario guide</summary><p>Pick a sample. Inspect its decoded fields. Review validation and contextual observations.</p><button type="button" id="dismiss-scenario-guide" class="btn">Dismiss guide</button></details>
+        <div id="scenario-result" hidden>
+          <h3>Decoded telemetry</h3>
+          <p id="scenario-source" class="muted small"></p>
+          <p id="scenario-validation"></p>
+          <div id="scenario-telemetry" class="scenario-telemetry"></div>
+          <h3>Contextual observations</h3>
+          <ul id="scenario-findings"></ul>
+          <p class="muted small">Heuristics flag changes for review. They do not confirm an attack or command execution.</p>
+          <details><summary>Methods and limits</summary><p>Only CRC-accepted frames feed these observations. GPS review threshold: over 100 m/s between 3D fixes. Relative-altitude review threshold: over 20 m/s. Comparisons require the same system, component and message type, with increasing capture timestamps no more than five seconds apart. Timestamp reversals disable rate checks. Capture times are not trusted flight times. Vehicle capability, sensor accuracy, authorization and flight context require separate evidence. CRC validates transmission integrity, not sender identity. At most 10,000 retained frames, 12 telemetry readings and 100 observations are shown.</p><a href="sample/scenarios.md">Fixture provenance and reproduction</a></details>
+          <details><summary>Expert frame inspection</summary><p>Inspect per-frame payload fields, received/computed checksums and bytes.</p><a id="scenario-inspect" class="btn" href="/stream">Inspect packet bytes</a></details>
+        </div>
+      </section>
       <section id="screen-system" class="screen" aria-labelledby="h-system" hidden>
         <h1 id="h-system" tabindex="-1">Health and metrics</h1>
         <button type="button" id="refresh-system" class="btn">Refresh service data</button>
@@ -186,7 +233,7 @@
         </div>
         <details class="box custom-dialect-panel" id="custom-dialect-panel">
           <summary>Custom message definitions</summary>
-          <p class="muted small">Pinned common and ArduPilotMega definitions are built in. Select one local entry dialect XML and the exact local XML files it names as includes; you can add includes before or after the entry file. DTDs and remote/path includes are rejected. Nothing is uploaded or saved.</p>
+          <p class="muted small">Pinned common and ArduPilotMega definitions are built in. Select one local entry dialect XML and the exact local XML files it names as includes; you can add includes before or after the entry file. DTDs and remote/path includes are rejected. Definitions stay in this tab unless you explicitly save a server run.</p>
           <div class="toolbar"><label for="custom-dialect-file">Dialect entry XML</label><input type="file" id="custom-dialect-file" accept=".xml,application/xml,text/xml"><label for="custom-dialect-includes">Referenced local include XML files</label><input type="file" id="custom-dialect-includes" accept=".xml,application/xml,text/xml" multiple><button type="button" class="btn" id="clear-custom-dialect" disabled>Clear custom dialect</button></div>
           <p id="custom-dialect-name" class="muted small">No custom dialect loaded. Up to 1 MiB per file, 4 MiB combined, 8 include levels, 512 custom messages.</p>
           <p id="custom-dialect-status" role="status" aria-live="polite"></p>
@@ -195,13 +242,14 @@
           <p id="status" role="status" aria-live="polite" class="status">Loading the parser…</p>
           <progress id="progress" max="100" value="0" aria-label="Parsing progress" hidden></progress>
           <span id="progress-text" class="muted" hidden></span>
-          <button type="button" class="btn" id="cancel" hidden>Cancel</button><button type="button" class="btn" id="offline-prepare">Prepare offline</button>
-          <p id="offline-status" class="muted small offline-status" role="status">Preparing offline assets…</p>
+          <button type="button" class="btn" id="cancel" hidden>Cancel</button>
+
         </div>
+        <server-workspace view="workbench"></server-workspace>
         <div class="capture-tools">
           <details class="box capture-tool" id="live-panel">
           <summary>Live radio</summary>
-          <p class="muted small">Read-only; nothing is uploaded.</p>
+          <p class="muted small">Read-only. Capture bytes upload only when you save a server run.</p>
           <div class="toolbar">
             <span class="field"><label for="serial-baud">Baud rate</label><select id="serial-baud"><option value="57600">57,600</option><option value="115200" selected>115,200</option><option value="230400">230,400</option><option value="460800">460,800</option><option value="921600">921,600</option></select></span>
             <button type="button" class="btn primary" id="connect-radio">Connect radio</button>
@@ -423,7 +471,7 @@
         <h2>Finding export</h2>
         <p>Frame details can save one row as JSON: tool version, file name, size and SHA-256, offsets, CRC wire vs computed, the sequence note if any, and the assumptions above. All payload bytes are left out by default. The checkbox adds them when a full frame was retained; raw bytes may contain GPS/position or other sensitive data. Unsupported and bad-flags candidates retain only a header, so their payload and CRC are unavailable.</p>
         <h2>Privacy and license</h2>
-        <p>Files are read in this browser tab and never uploaded. All inspection and export tools are free. Coverage is measured against the pinned common + ArduPilotMega XML graph only; other dialects and hardware behavior are not claimed. See the <a href="dialect-coverage.json">machine-readable message/field coverage inventory</a>. The C library and inspector are MIT licensed; message definitions use the official MAVLink XML (<a href="LICENSE-MAVLink.txt">notice</a>). Atkinson Hyperlegible is under the SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
+        <p>Files are parsed in this browser tab. Saving a server run explicitly uploads its capture and custom definitions. All inspection and export tools are free. Coverage is measured against the pinned common + ArduPilotMega XML graph only; other dialects and hardware behavior are not claimed. See the <a href="dialect-coverage.json">machine-readable message/field coverage inventory</a>. The C library and inspector are MIT licensed; message definitions use the official MAVLink XML (<a href="LICENSE-MAVLink.txt">notice</a>). Atkinson Hyperlegible is under the SIL Open Font License 1.1 (<a href="css/OFL-Atkinson-Hyperlegible.txt">license</a>).</p>
       </section>
 
       <!-- Not found -->

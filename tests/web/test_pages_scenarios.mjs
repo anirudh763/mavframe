@@ -1,0 +1,83 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { chromium, DOCS } from './browser.mjs';
+
+let server, browser, base;
+const prefix = '/mavframe/';
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.tlog': 'application/octet-stream', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json', '.md': 'text/plain', '.sql': 'text/plain' };
+before(async () => {
+  server = http.createServer((request, response) => {
+    const pathname = new URL(request.url, 'http://local').pathname;
+    if (!pathname.startsWith(prefix)) { response.writeHead(404).end(); return; }
+    const file = path.resolve(DOCS, pathname.slice(prefix.length) || 'index.html');
+    if (!file.startsWith(DOCS + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { response.writeHead(404).end(); return; }
+    response.writeHead(200, { 'content-type': types[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(response);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  base = `http://127.0.0.1:${server.address().port}${prefix}`;
+  browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+});
+after(async () => { await browser?.close(); server?.close(); });
+const done = page => page.waitForFunction(() => document.querySelector('#scenario-status').textContent.startsWith('Demo complete') && !document.querySelector('#run-scenario').disabled);
+
+test('Pages prefix: normal, CRC, inspect, reset and fresh copied GPS use real Wasm without leaving the workspace', async () => {
+  const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage(); page.setDefaultTimeout(10000);
+  const errors = []; const failures = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('requestfailed', request => failures.push(request.url()));
+  await page.goto(base + '#/capture');
+  await page.waitForFunction(() => document.querySelector('#status').textContent === 'sample-flight.tlog loaded.');
+  assert.equal(await page.locator('#scenario-panel').isVisible(), true);
+  await page.locator('#run-scenario').click(); await done(page);
+  assert.match(await page.locator('#scenario-validation').innerText(), /2 CRC-valid frames; 0 CRC failures/);
+  assert.match(await page.locator('#scenario-telemetry').innerText(), /Standby/);
+  assert.match(new URL(page.url()).hash, /scenario=heartbeat/);
+  await page.locator('#scenario-select').selectOption('crc'); await page.locator('#run-scenario').click(); await done(page);
+  assert.match(await page.locator('#scenario-validation').innerText(), /0 CRC-valid frames; 1 CRC failures/);
+  await page.locator('#scenario-result details').last().locator('summary').click();
+  assert.match(await page.locator('#scenario-inspect').getAttribute('href'), /^#\/frames\/0\?.*scenario=crc/);
+  await page.locator('#scenario-inspect').click();
+  await page.waitForFunction(() => document.querySelector('#crc-compare').textContent.includes('Mismatch: CRC failed'));
+  assert.equal(new URL(page.url()).pathname, prefix);
+  await page.locator('#reset-scenario').click();
+  assert.equal(new URL(page.url()).pathname, prefix);
+  assert.equal(new URL(page.url()).hash, '#/capture');
+  assert.equal(await page.locator('#scenario-result').isVisible(), false);
+  assert.equal(await page.locator('#workspace-shell').isVisible(), true);
+  await page.locator('#scenario-select').selectOption('gps'); await page.locator('#run-scenario').click(); await done(page);
+  const shared = page.url();
+  const fresh = await context.newPage(); await fresh.goto(shared); await done(fresh);
+  assert.match(await fresh.locator('#scenario-findings').innerText(), /1112 m in 1.0 s/);
+  assert.match(await fresh.locator('#scenario-source').innerText(), /scenario-gps.tlog/);
+  await fresh.reload(); await done(fresh);
+  assert.match(await fresh.locator('#scenario-source').innerText(), /scenario-gps.tlog/);
+  await fresh.locator('.nav a[data-route="frames"]').click();
+  assert.match(new URL(fresh.url()).hash, /^#\/frames\?scenario=gps/);
+  assert.equal(await fresh.locator('#scenario-select').isVisible(), true);
+  assert.equal(new URL(fresh.url()).pathname, prefix);
+  await fresh.locator('.nav a[data-route="capture"]').click();
+  const upload = fs.readFileSync(path.join(DOCS, 'sample/scenario-heartbeat.tlog'));
+  await fresh.locator('#file').setInputFiles({ name: 'public-tab-upload.tlog', mimeType: 'application/octet-stream', buffer: upload });
+  await fresh.waitForFunction(() => document.querySelector('#status').textContent === 'public-tab-upload.tlog loaded.');
+  assert.equal(new URL(fresh.url()).hash, '#/capture');
+  assert.equal(await fresh.locator('#reset-scenario').isDisabled(), true);
+  assert.match(await fresh.locator('#scenario-source').innerText(), /^public-tab-upload.tlog$/);
+  assert.match(await fresh.locator('#scenario-validation').innerText(), /2 CRC-valid frames/);
+  assert.deepEqual(fs.readFileSync(path.join(DOCS, 'sample/scenario-heartbeat.tlog')), upload);
+  const invalid = await context.newPage(); const samples = [];
+  invalid.on('request', request => { if (request.url().includes('/sample/')) samples.push(request.url()); });
+  await invalid.goto(base + '#/capture?scenario=../gps');
+  await invalid.waitForFunction(() => !document.querySelector('#run-scenario').disabled);
+  assert.match(await invalid.locator('#scenario-status').innerText(), /Unknown scenario/);
+  assert.deepEqual(samples, []);
+  const landing = await context.newPage(); await landing.goto(base);
+  assert.equal(await landing.locator('#screen-landing').isVisible(), true);
+  assert.equal(await landing.locator('#workspace-shell').isVisible(), false);
+  assert.deepEqual(errors, []); assert.deepEqual(failures, []);
+  await context.close();
+});

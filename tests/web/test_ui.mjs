@@ -192,7 +192,7 @@ test("keyboard only: load the sample, go to Frames, step to an issue, move throu
   await page.waitForFunction(() => document.activeElement.id === "load-sample");
   await tabTo("#file");
   await tabTo("#format");
-  await tabTo('.nav a[data-route="frames"]');
+  await tabTo('.product-nav a[data-context="frames"]');
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.activeElement.id === "h-frames");
   await tabTo("#next-issue");

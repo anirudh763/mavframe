@@ -145,7 +145,8 @@ export async function acceptUpdate() {
   return { ok: true };
 }
 
-export async function shareTextOrFile({ title, text, file }) {
+export async function shareTextOrFile({ title, text, file, isCurrent = () => true }) {
+  if (!isCurrent()) return { method: "cancelled", delivered: false };
   if (typeof navigator.share === 'function') {
     try {
       if (file && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
@@ -159,6 +160,7 @@ export async function shareTextOrFile({ title, text, file }) {
       // A native-share error falls through to the explicit clipboard fallback.
     }
   }
+  if (!isCurrent()) return { method: "cancelled", delivered: false };
   try {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard is unavailable.');
     await navigator.clipboard.writeText(text);

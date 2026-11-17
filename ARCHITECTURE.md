@@ -1,8 +1,10 @@
 # Mavframe architecture
 
 Mavframe is a local capture inspector. The GitHub Pages deployment has no application server or capture upload. The local
-five-app deployment adds a small HTTP serving process for exact-path routing and
-process observability. Existing browser-local profiles store view settings; optional
+five-app deployment adds a small HTTP serving process for exact-path routing,
+process observability and session-owned SQLite workspaces. Explicit saves upload
+capture/XML artifacts and actual browser-computed summaries; durable sessions and
+logical snapshots survive container recreation on a private volume. Existing browser-local profiles store view settings; optional
 cloud synchronization remains separately configured. The native C library and
 the browser use the same `src/mavframe.c` framing and checksum implementation.
 
@@ -99,3 +101,8 @@ Control-state anomaly detection is not implemented: the anomaly page exposes exi
 CRC/sequence findings and names that limit. Physical-radio validation, manual human
 screen-reader testing and hosted Kubernetes deployment are not established by browser
 checks. Frontend evidence is in `artifacts/verification/post-restart/`.
+
+
+## Implemented private server mode
+
+Four product routes (`/overview`, `/workbench`, `/reports`, `/settings`) expose actual workflows and stored evidence. Optional server persistence uses SQLite WAL on a private UID10001 volume, opaque durable Beaker sessions and Argon2 accounts. Origin/CSRF/owner checks, quotas and idempotent saves are enforced by the server. No reconnect upload, private signing-key storage or private API caching occurs. Snapshots stay on the same local volume; they are not an independent device backup. See [server workspaces](SERVER_WORKSPACES.md) for contracts, launch, limits and recovery. AWS diagrams elsewhere remain proposals.

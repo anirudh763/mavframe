@@ -28,14 +28,52 @@ The local serving process exposes these exact URLs; existing `#/capture`, `#/fra
 | URL | Working capability |
 |---|---|
 | `/` | Local MAVLink frame decoder, files, samples and reports |
-| `/anomalies` | Existing parser CRC, unsupported-message and sequence findings |
+| `/anomalies` | Parser CRC/sequence findings and separate contextual telemetry observations |
 | `/stream` | Selected packet fields, hex bytes and wire/computed checksum comparison |
 | `/system` | Live liveness, readiness, HTTP counters and Prometheus data |
 
-`/anomalies` does not implement control-state anomaly detection. Sequence-gap estimates
-assume one fully observed channel and in-order arrival; CRC is not authentication.
-Shareable filter/row/tab state is in the URL. Capture bytes remain in the current tab.
-The synthetic sample loads for guest inspection; opening a local file replaces that sample.
+Sequence-gap estimates assume one fully observed channel and in-order arrival; CRC is not
+authentication. Contextual GPS/relative-altitude thresholds are review heuristics, not attack
+verdicts or aircraft-specific limits. Command receipt does not establish execution or authorization.
+Shareable scenario/filter/row/tab state is in the URL. Capture bytes remain in the current tab.
+Legacy guest hash routes and direct `/anomalies` or `/stream` links with validated
+filter/row/tab parameters still auto-load the engineering sample in a fresh tab.
+Plain product routes show the sample preview until the user loads a capture or runs a scenario.
+
+On `/`, pick a **Synthetic scenario** and choose **Run Interactive Demo**. The committed C/Wasm
+parser decodes each sample; readable telemetry and protocol validation appear before expert bytes.
+
+- **Normal heartbeat**: two accepted frames; quadrotor, ArduPilotMega, standby, unarmed.
+- **Suspicious GPS sequence**: two accepted fixes, about 1,112 m in one second; exceeds the
+  illustrative 100 m/s GPS review threshold.
+- **Unexpected altitude / control sequence**: three accepted frames; relative altitude rises
+  100 m in two seconds (50 m/s, above the 20 m/s review threshold). An altitude-change command
+  requests 110 m relative to home; no acknowledgement or execution is inferred.
+- **Corrupted CRC**: zero accepted frames and one checksum failure. Expert frame inspection
+  shows received and C/Wasm-computed checksums; rejected bytes never become telemetry.
+
+**Reset demo** clears only the loaded demo in this tab. A failed sample download retains the
+previous result and provides retry guidance. Sample selection never edits files on disk or
+encodes uploaded capture contents in a URL. Copy links such as
+`/anomalies?scenario=gps&check=all&msg=24` to reproduce a public sample and its filters in a fresh
+tab. The compact Scenario guide can be dismissed. Existing file, radio, offline, profile and
+export workflows remain available.
+
+All four fixtures are synthetic, generated with pymavlink and validated by native C and Wasm.
+See [fixture provenance, exact fields and limitations](docs/sample/scenarios.md).
+
+On GitHub Pages, the same workflow is available at `/mavframe/#/capture`; Frames offers
+it under **Sample scenarios**. Shared links such as
+`/mavframe/#/capture?scenario=gps` load the public fixture through Wasm in a fresh tab.
+Inspection and reset stay in the prefixed hash workspace; the public frontdoor is preserved.
+The prefixed browser smoke test covers heartbeat → CRC → byte inspection → reset, a copied
+GPS link in a fresh tab, upload isolation, invalid IDs and the frontdoor (1 passed).
+
+Repair verification (2026-11-16): native C/Werror 3 passed; Python 21 passed; Node/Wasm
+helpers 37 passed (including 11 scenario/domain checks); browser regression 75 passed with
+the README screenshot opt-in enabled; product/scenario checks 19 passed. The scenario checks
+covered three independent tabs, copied links, reset, download/parser failures, offline reload,
+and light/dark axe plus layout checks at 320/768/1440 px. No native screen-reader claim is made.
 
 The exact paths use `tools/http_server.py`, whose only Python dependency is pinned
 in `requirements-web.txt`. A plain static host
@@ -164,7 +202,7 @@ http://localhost:8000/.
 compiled directly to a 5,055-byte WebAssembly module together with a small
 glue file (`web/wasm/mavframe_wasm.c`). Open a `.tlog` (an 8-byte big-endian
 microsecond timestamp before each frame) or a raw byte stream, or press
-**Load synthetic sample**. Files are read in the tab and never uploaded.
+**Load synthetic sample**. Files are parsed in the tab; explicitly saving a server run uploads capture bytes and custom definitions to the owned workspace.
 
 It works like a packet analyzer (modelled on Wireshark's packet list, packet
 details and packet bytes panes):
@@ -529,8 +567,8 @@ arm-none-eabi-size sz.o
   radio link has been tested yet.
 - Compiled for Cortex-M3 but never run on a microcontroller. Current finite checks include Linux and macOS;
   no avionics certification or physical-radio validation is claimed.
-- No command validation, filtering or anomaly detection of any kind. This is a
-  frame parser.
+- The C library validates frames, not command authorization or flight safety. The browser's
+  separate contextual telemetry heuristics flag changes for review and do not establish an attack.
 - The browser decodes 326 pinned message definitions. File rates need a positive .tlog interval; live rates use
   browser chunk-arrival timing. Files over 256 MiB are refused. Frame/finding/grouping retention is bounded and
   disclosed in exports. Sequence-gap counts are estimates (see Browser inspector).
@@ -545,3 +583,29 @@ MIT, see `LICENSE`. Security reports: `SECURITY.md`. Contributing:
 `CONTRIBUTING.md`.
 
 Local verification: [2026-11-15 checks and limits](docs/verification/release-2026-11-15.md).
+
+
+### Local server workspace
+
+The local deployment adds `/overview`, `/workbench`, `/reports`, `/settings`.
+The existing packet/hash URLs remain supported. Explicit **Save current run**
+stores a real browser C/Wasm summary and source artifacts in the session-owned
+SQLite workspace; saved inputs reopen through the same parser. Custom dialect
+entry and include XML are saved together. Local capture exports retain full
+report details; server summaries are bounded and omit raw payloads, while the
+separate capture artifact contains the original bytes.
+
+The HTTP image pins Beaker 1.13.0 and argon2-cffi 25.1.0. `APP_DATA_DIR` is a
+private volume owned by UID 10001; retain it and the stable session secret together.
+Local Compose uses `.local-state/mavframe.env` and `mavframe-data`. Server accounts
+are optional and have no external identity verification or email recovery.
+Metadata is capped at 64 KiB and each source artifact at 32 MiB; local parsing remains
+bounded at 256 MiB. Snapshots remain on the same volume and are not a separate
+device backup. Browser profile/encrypted backups remain separate, with no automatic
+import of old drafts. Public static hosting keeps the offline parser and local
+exports; server storage is unavailable there.
+
+
+### Private server workspaces
+
+The optional HTTP image adds owned saved runs, source artifacts, durable guest/account sessions and real workspace snapshots. Explicit Save controls uploads; domain checks stay in the browser. See [server configuration, API bounds and recovery](SERVER_WORKSPACES.md). Static Pages remains usable without these APIs.

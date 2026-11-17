@@ -8,7 +8,7 @@ before(async () => {
   browser = await chromium.launch(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {});
 });
 after(async () => { await browser?.close(); server?.close(); });
-for (const [route, title] of [["", "MAVLink frame decoder"], ["anomalies", "Anomaly analysis"], ["stream", "Hex / binary comparison"], ["system", "Health and metrics"]]) {
+for (const [route, title] of [["", "Overview"], ["overview", "Overview"], ["workbench", "Workbench"], ["reports", "Reports"], ["settings", "Settings"], ["anomalies", "Anomaly analysis"], ["stream", "Hex / binary comparison"], ["system", "Health and metrics"]]) {
   test(`direct /${route} and refresh show ${title}`, async () => {
     const page = await browser.newPage({serviceWorkers:"block"});
     await page.goto(base + route);
@@ -24,7 +24,9 @@ for (const [route, title] of [["", "MAVLink frame decoder"], ["anomalies", "Anom
 test('exact-path filters, packet selection, Back/Forward and tabs preserve the loaded capture', async () => {
   const context = await browser.newContext({serviceWorkers:'block', viewport:{width:1440,height:1000}});
   const page = await context.newPage();
-  await page.goto(base);
+  await page.goto(base + 'workbench');
+  await page.waitForFunction(() => !document.querySelector('#load-sample').disabled);
+  await page.locator('#load-sample').click();
   await page.waitForFunction(() => document.querySelector('#status').textContent === 'sample-flight.tlog loaded.');
   const {default:fs} = await import('node:fs/promises');
   const sample = await fs.readFile(new URL('../../docs/sample/sample-flight.tlog', import.meta.url));
@@ -49,7 +51,7 @@ test('exact-path filters, packet selection, Back/Forward and tabs preserve the l
   const other = await context.newPage();
   await other.goto(base + 'anomalies?check=unsupported&msg=30');
   await other.waitForSelector('#frames-body');
-  await page.locator('[data-product-route="decoder"]').click();
+  await page.locator('.canonical-nav [data-canonical="workbench"]').click();
   await page.locator('#file').setInputFiles({name:'empty.bin', mimeType:'application/octet-stream', buffer:Buffer.alloc(0)});
   await page.waitForFunction(() => document.querySelector('#status').textContent.includes('empty (0 bytes)'));
   assert.equal(new URL(other.url()).search, '?check=unsupported&msg=30');
@@ -75,19 +77,22 @@ test('system reports actual response data and a controlled dependency failure', 
   await page.close();
 });
 
-for (const width of [320,768,1440]) {
+for (const width of [320,375,768,1024,1440]) {
   test(`all product routes reflow, pass axe and capture evidence at ${width}px`, async () => {
     const { axeViolations, smallTargets, waitParsed, cspViolations } = await import('./browser.mjs');
     const { default:fs } = await import('node:fs/promises');
-    const out = new URL('../../artifacts/verification/post-restart/', import.meta.url);
+    const out = process.env.MAVFRAME_EVIDENCE_DIR ? new URL(process.env.MAVFRAME_EVIDENCE_DIR + '/', 'file:///') : new URL('../../artifacts/verification/post-restart/', import.meta.url);
     await fs.mkdir(out,{recursive:true});
     const page = await browser.newPage({serviceWorkers:'block',viewport:{width,height:1000}});
     const errors=[];page.on('pageerror',e => errors.push(e.stack));
     await page.addInitScript(() => { window.__csp=[]; document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective)); });
-    await page.goto(base);
+    await page.goto(base + 'workbench');
+    await page.waitForFunction(() => !document.querySelector('#load-sample').disabled);
+    await page.locator('#load-sample').click();
     await waitParsed(page,'sample-flight.tlog');
-    for (const [route, title] of [['decoder','MAVLink frame decoder'],['anomalies','Anomaly analysis'],['stream','Hex / binary comparison'],['system','Health and metrics']]) {
-      await page.locator(`[data-product-route="${route}"]`).click();
+    for (const [route, title] of [['workbench','Workbench'],['anomalies','Anomaly analysis'],['stream','Hex / binary comparison'],['settings','Settings']]) {
+      if (width < 1000 && ["workbench", "settings"].includes(route)) await page.locator("#menu-btn").click();
+      await page.locator(["workbench", "settings"].includes(route) ? `.canonical-nav [data-canonical="${route}"]` : `[data-product-route="${route}"]`).click();
       await page.waitForFunction(t => document.title.startsWith(t),title);
       assert.equal(await page.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth + 1),true, `${route} root overflow`);
       assert.deepEqual(await smallTargets(page),[],route);
@@ -105,6 +110,8 @@ for (const width of [320,768,1440]) {
 test('anomaly All filter is explicit and missing API/assets remain 404', async () => {
   const page = await browser.newPage({serviceWorkers:'block'});
   await page.goto(base + 'anomalies');
+  await page.locator('#scenario-select').selectOption('crc');
+  await page.locator('#run-scenario').click();
   await page.waitForSelector('#frame-table tbody a');
   await page.getByRole('button',{name:'All',exact:true}).click();
   assert.equal(new URL(page.url()).searchParams.get('check'),'all');
@@ -124,11 +131,34 @@ test('all exact routes reopen offline after public assets are verified', async (
   await context.setOffline(true);
   for (const route of ['anomalies','stream','system']) {
     await page.goto(base + route);
-    await page.waitForFunction(() => document.querySelector('.product-nav [aria-current="page"]') !== null);
-    assert.equal(await page.locator(`[data-product-route="${route}"]`).getAttribute('aria-current'),'page');
+    await page.waitForFunction(() => document.querySelector('.canonical-nav [aria-current="page"]') !== null);
+    assert.equal(await page.locator(`.canonical-nav [data-canonical="${route === 'system' ? 'settings' : 'workbench'}"]`).getAttribute('aria-current'),'page');
   }
   await page.waitForFunction(() => document.querySelector('#system-status').textContent.startsWith('Some'));
   assert.equal(await page.locator('#system-checks .system-failure').count(),4);
   await context.setOffline(false);
   await context.close();
+});
+
+test('mobile utility disclosures retain focus inside the menu and close before the sheet', async () => {
+  const page = await browser.newPage({serviceWorkers:'block',viewport:{width:375,height:812}});
+  await page.goto(base + '#/capture');
+  await page.locator('#menu-btn').click();
+  await page.locator('#account-menu > summary').click();
+  await page.keyboard.press('Tab');
+  assert.equal(await page.locator(':focus').getAttribute('id'),'profile-link');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#account-menu').getAttribute('open'),null);
+  assert.equal(await page.locator('#menu-btn').getAttribute('aria-expanded'),'true');
+  assert.equal(await page.locator(':focus').getAttribute('id'),'account-label');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#menu-btn').getAttribute('aria-expanded'),'false');
+  assert.equal(await page.locator(':focus').getAttribute('id'),'menu-btn');
+  await page.locator('#menu-btn').click();
+  await page.locator('.support-tools > summary').click();
+  const panel = await page.locator('.support-panel').boundingBox();
+  assert.ok(panel.x >= 0 && panel.x + panel.width <= 375, JSON.stringify(panel));
+  await page.locator('.support-tools > summary').press('Escape');
+  assert.equal(await page.locator('.support-tools').getAttribute('open'),null);
+  await page.close();
 });

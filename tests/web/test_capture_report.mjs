@@ -34,3 +34,16 @@ test('raw captures never invent Hz or a capture clock', async () => {
   assert.equal(report.clock.duration_s, null);
   assert.equal(report.messages[0].rate_hz, null);
 });
+
+
+test('bounded saved summary uses the same engine counts, settings and source hash without materializing timelines', async () => {
+  const { buildCaptureReport } = await import('../../docs/js/capture-report.js');
+  const bytes = sample;
+  const result = await analyze(bytes, { parser, format: 'tlog' });
+  const full = await buildCaptureReport({ result, bytes, fileName: 'sample.tlog' });
+  const bounded = await buildCaptureReport({ result, bytes, fileName: 'sample.tlog', summaryOnly: true });
+  for (const field of ['summary', 'settings', 'source', 'retention']) assert.deepEqual(bounded[field], full[field]);
+  assert.equal(bounded.sequence_timeline, undefined);
+  assert.equal(bounded.link_health_timeline, undefined);
+  assert.ok(new TextEncoder().encode(JSON.stringify(bounded)).length < 65536);
+});

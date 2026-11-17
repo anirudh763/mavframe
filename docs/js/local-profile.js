@@ -175,7 +175,7 @@ export function initLocalProfiles(onLogout = () => {}) {
     channel.addEventListener("message", ({ data }) => {
       const current = getSession();
       if (data?.type === "logout" && (current?.id === data.id || pendingProfileId === data.id)) {
-        serviceEpoch++;
+        invalidatePrivateOperations();
         if (current?.id === data.id) {
           clearSession(); volatileSession = null; logoutHandler({ remote: true, id: data.id });
         }
@@ -186,7 +186,7 @@ export function initLocalProfiles(onLogout = () => {}) {
   window.addEventListener("storage", (event) => {
     const current = getSession();
     if (current?.mode === "profile" && (event.key === null || (event.key === INDEX_KEY || event.key === LEGACY_INDEX_KEY) && event.newValue === null || (event.key === profileKey(current.id) || event.key === legacyProfileKey(current.id)) && event.newValue === null)) {
-      serviceEpoch++; clearSession(); volatileSession = null; pendingProfileId = null;
+      invalidatePrivateOperations(); clearSession(); volatileSession = null; pendingProfileId = null;
       logoutHandler({ remote: true, id: current.id, reason: "profile-storage-removed" });
       return;
     }
@@ -194,7 +194,7 @@ export function initLocalProfiles(onLogout = () => {}) {
     try {
       const message = JSON.parse(event.newValue); const current = getSession();
       if (current?.id === message.id || pendingProfileId === message.id) {
-        serviceEpoch++;
+        invalidatePrivateOperations();
         if (current?.id === message.id) { clearSession(); volatileSession = null; logoutHandler({ remote: true, id: message.id }); }
         if (pendingProfileId === message.id) pendingProfileId = null;
       }
@@ -249,7 +249,7 @@ export async function signup(emailInput, password) {
       store.setItem(INDEX_KEY, JSON.stringify([...records, { id, email }]));
       if (epoch !== serviceEpoch) throw new DOMException("Profile creation cancelled because the session changed.", "AbortError");
       writeSession({ schema: SCHEMA, mode: "profile", id, nonce: randomId() });
-      volatileSession = null; serviceEpoch++;
+      volatileSession = null; invalidatePrivateOperations();
     } catch (error) {
       try {
         store.removeItem(profileKey(id));
@@ -281,12 +281,12 @@ export async function login(emailInput, password) {
   if (epoch !== serviceEpoch) { pendingProfileId = null; throw new DOMException("Login cancelled because the session changed.", "AbortError"); }
   try { writeSession({ schema: SCHEMA, mode: "profile", id: profile.id, nonce: randomId() }); }
   catch (error) { pendingProfileId = null; throw error; }
-  volatileSession = null; pendingProfileId = null; serviceEpoch++;
+  volatileSession = null; pendingProfileId = null; invalidatePrivateOperations();
   return profile;
 }
 
 export function startGuest() {
-  serviceEpoch++;
+  invalidatePrivateOperations();
   pendingProfileId = null;
   const session = { schema: SCHEMA, mode: "guest", id: randomId(), nonce: randomId() };
   volatileSession = session;
@@ -294,9 +294,15 @@ export function startGuest() {
   return session;
 }
 
+export function invalidatePrivateOperations() {
+  serviceEpoch++;
+  pendingProfileId = null;
+  backupStages.clear();
+}
+
 export function logout() {
   const current = getSession();
-  serviceEpoch++;
+  invalidatePrivateOperations();
   pendingProfileId = null;
   clearSession(); volatileSession = null;
   if (current) announceLogout(current.id);
@@ -452,6 +458,7 @@ export async function createEncryptedBackup(passphrase) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveAesKey(passphrase, salt, ["encrypt"]);
+  if (epoch !== serviceEpoch) throw new DOMException("Backup cancelled because the session changed.", "AbortError");
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: encoder.encode(`mavframe-backup:${BACKUP_SCHEMA}`) }, key, plain);
   if (epoch !== serviceEpoch || getSession()?.id !== session.id || getSession()?.nonce !== session.nonce) throw new DOMException("Backup cancelled because the profile session changed.", "AbortError");
   return JSON.stringify({ appId: APP, version: 1, schema: BACKUP_SCHEMA,
@@ -460,6 +467,8 @@ export async function createEncryptedBackup(passphrase) {
 }
 
 export async function previewEncryptedBackup(raw, passphrase) {
+  const epoch = serviceEpoch;
+  const current = () => { if (epoch !== serviceEpoch) throw new DOMException("Backup preview cancelled because the session changed.", "AbortError"); };
   backupPassphrase(passphrase);
   if (typeof raw !== "string" || raw.length > BACKUP_MAX_BYTES) throw new Error("Backup file exceeds the 1 MiB safety limit.");
   assertJsonDepth(raw);
@@ -474,20 +483,23 @@ export async function previewEncryptedBackup(raw, passphrase) {
   let plain;
   try {
     const key = await deriveAesKey(passphrase, salt, ["decrypt"]);
+    current();
     plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: encoder.encode(`mavframe-backup:${BACKUP_SCHEMA}`) }, key, ciphertext);
-  } catch { throw new Error("Backup could not be decrypted. Check the passphrase and file integrity."); }
+  } catch (error) { current(); throw error.name === "AbortError" ? error : new Error("Backup could not be decrypted. Check the passphrase and file integrity."); }
+  current();
   if (plain.byteLength > 512 * 1024) throw new Error("Decrypted profile data exceeds the 512 KiB limit.");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(plain); assertJsonDepth(text);
   let data; try { data = JSON.parse(text); } catch { throw new Error("Decrypted profile data is malformed."); }
   const validated = validateBackupData(data);
   const newProfileSalt = crypto.getRandomValues(new Uint8Array(16));
   const newProfileVerifier = await derive(passphrase, newProfileSalt);
+  current();
   const existingProfile = readIndex().find(item => item.email === validated.email);
   const active = getSession();
   const conflictCount = existingProfile && active?.mode === "profile" && active.id === existingProfile.id
     ? validated.workspaces.filter(item => (loadWorkspace() || []).some(current => current.name === item.name)).length : 0;
   const stageId = randomId();
-  backupStages.set(stageId, { data: validated, credentials: { salt: b64(newProfileSalt), verifier: b64(newProfileVerifier) }, created: Date.now() });
+  backupStages.set(stageId, { epoch, data: validated, credentials: { salt: b64(newProfileSalt), verifier: b64(newProfileVerifier) }, created: Date.now() });
   for (const [id, value] of backupStages) if (Date.now() - value.created > 5 * 60_000) backupStages.delete(id);
   while (backupStages.size > 3) backupStages.delete(backupStages.keys().next().value);
   return { stageId, email: validated.email, workspaceCount: validated.workspaces.length, existingProfile: !!existingProfile, conflictCount };
@@ -495,7 +507,7 @@ export async function previewEncryptedBackup(raw, passphrase) {
 
 export async function commitEncryptedBackup(stageId, mode) {
   const staged = backupStages.get(stageId);
-  if (!staged || Date.now() - staged.created > 5 * 60_000) throw new Error("Backup preview expired. Select and preview the file again.");
+  if (!staged || staged.epoch !== serviceEpoch || Date.now() - staged.created > 5 * 60_000) throw new Error("Backup preview expired. Select and preview the file again.");
   if (!["restore", "merge"].includes(mode)) throw new Error("Choose restore or merge after reviewing the preview.");
   const data = staged.data; const records = readIndex(); let profile = records.find(item => item.email === data.email);
   if (profile && mode === "restore" && getSession()?.id !== profile.id) throw new Error("Log in to the matching local profile before replacing its saved settings.");
@@ -503,7 +515,7 @@ export async function commitEncryptedBackup(stageId, mode) {
   if (!profile && mode === "merge") throw new Error("Merge is available only for an existing matching local profile.");
   const epoch = serviceEpoch;
   return withProfileIndexLock(() => withWorkspaceLock(async () => {
-    if (epoch !== serviceEpoch) throw new DOMException("Backup restore cancelled because the session changed.", "AbortError");
+    if (epoch !== serviceEpoch || backupStages.get(stageId) !== staged) throw new DOMException("Backup restore cancelled because the session changed.", "AbortError");
     const store = storage(); const fresh = readIndex(); profile = fresh.find(item => item.email === data.email);
     const active = getSession();
     if (profile && active?.id !== profile.id) throw new Error("The matching profile session changed. Log in and preview again.");
@@ -534,7 +546,7 @@ export async function commitEncryptedBackup(stageId, mode) {
       throw error;
     }
     backupStages.delete(stageId);
-    if (!profile) { volatileSession = null; serviceEpoch++; }
+    if (!profile) { volatileSession = null; invalidatePrivateOperations(); }
     return { profileId: id, email: data.email, workspaceCount: restoredWorkspaceCount, createdProfile: !profile };
   }));
 }

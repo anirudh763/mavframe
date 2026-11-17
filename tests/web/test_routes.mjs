@@ -22,9 +22,9 @@ after(async () => {
 });
 const openPage = (opts) => open(browser, base, opts);
 
-// The CSP shipped on origin/main; the rebuild must keep it (or make it stricter).
-const SHIPPED_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
-const TEST_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'";
+// Shipped resources stay same-origin; only the test receiver extends connect-src.
+const SHIPPED_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'";
+const TEST_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; manifest-src 'self'; base-uri 'none'; form-action 'none'";
 
 const h1Text = (page) => page.evaluate(() => [...document.querySelectorAll("h1")].find((h) => h.offsetParent !== null)?.textContent.trim());
 const focusedH1 = (page) => page.evaluate(() => document.activeElement.tagName === "H1" ? document.activeElement.textContent.trim() : null);
@@ -334,7 +334,7 @@ test("44 px targets: every interactive element on every screen at 320 and 1440 (
     await page.waitForFunction(() => [...document.querySelectorAll("h1")].some((h) => h.offsetParent !== null));
     await page.evaluate(() => {
       const sheet = new CSSStyleSheet();
-      sheet.replaceSync('.nav a, [role="tab"], #menu-btn { min-height: 24px !important; height: 24px !important; padding-top: 0 !important; padding-bottom: 0 !important; }');
+      sheet.replaceSync('.nav a, .product-nav a, [role="tab"], #menu-btn { min-height: 24px !important; height: 24px !important; padding-top: 0 !important; padding-bottom: 0 !important; }');
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
     });
     if (width < 1000) await page.getByRole("button", { name: "Menu", exact: true }).click();
@@ -466,20 +466,20 @@ test("gate 2: the mobile Menu opens a sheet, keeps focus inside, closes with Esc
     assert.equal(await page.isVisible('nav[aria-label="Main"]'), true);
     const inSheet = () => page.evaluate(() => !!document.activeElement.closest("#sheet"));
     assert.ok(await inSheet(), "focus moved into the sheet");
-    for (let i = 0; i < 12; i++) { await page.keyboard.press("Tab"); assert.ok(await inSheet(), `Tab ${i} stays in the sheet`); }
+    for (let i = 0; i < 12; i++) { await page.keyboard.press("Tab"); assert.ok(await inSheet(), `Tab ${i} stays in the sheet: ${await page.evaluate(() => document.activeElement.outerHTML.slice(0,180))}`); }
     for (let i = 0; i < 12; i++) { await page.keyboard.press("Shift+Tab"); assert.ok(await inSheet(), `Shift+Tab ${i} stays in the sheet`); }
     await page.keyboard.press("Escape");
     assert.equal(await page.isVisible('nav[aria-label="Main"]'), false, "closed");
     assert.equal(await page.evaluate(() => document.activeElement.id), "menu-btn", "focus back on Menu");
     // Choosing a destination closes the sheet and focuses the new screen's H1.
     await menu.click();
-    await page.getByRole("link", { name: "Format help" }).click();
-    await waitRoute(page, /^#\/help/);
-    assert.equal(await focusedH1(page), "Format help");
+    await page.locator(".canonical-nav").getByRole("link", { name: "Reports", exact: true }).click();
+    await page.waitForFunction(() => location.pathname === "/reports");
+    assert.equal(await focusedH1(page), "Reports");
     assert.equal(await menu.getAttribute("aria-expanded"), "false");
     await page.close();
   }
-  // Desktop: commands run across the top without reserving a sidebar column.
+  // Desktop: the four canonical workspaces keep a persistent sidebar.
   const page = await openPage({ viewport: { width: 1440, height: 900 } });
   assert.equal(await page.isVisible("#menu-btn"), false);
   const commands = await page.$eval("#sheet", (e) => {
@@ -488,23 +488,23 @@ test("gate 2: the mobile Menu opens a sheet, keeps focus inside, closes with Esc
   });
   assert.equal(commands.x, 0);
   assert.equal(commands.y, 0);
-  assert.equal(commands.width, 1440);
-  assert.ok(commands.height < 100, `compact horizontal commands: ${commands.height}px`);
-  assert.equal(await page.$eval("#workspace", (e) => e.getBoundingClientRect().x), 0);
+  assert.equal(commands.width, 231);
+  assert.ok(commands.height >= 900, `persistent sidebar: ${commands.height}px`);
+  assert.equal(await page.$eval("#workspace", (e) => e.getBoundingClientRect().x), 232);
   await page.close();
 });
 
 test("gate 3: every route change moves focus to the H1 and sets the title", async () => {
   const page = await openPage();
-  for (const [link, h1, title] of [["Frames", "Frames", "Frames – Mavframe"], ["Format help", "Format help", "Format help – Mavframe"], ["Capture", "Capture", "Capture – Mavframe"]]) {
-    await page.locator('nav[aria-label="Main"]').getByRole("link", { name: link, exact: true }).click();
+  for (const [link, h1, title] of [["Frames", "Frames", "Frames – Mavframe"], ["Format help", "Format help", "Format help – Mavframe"], ["Capture", "Workbench", "Workbench – Mavframe"]]) {
+    await page.locator('nav[aria-label="Inspection tools"]').getByRole("link", { name: link, exact: true }).click();
     await page.waitForFunction((t) => document.title === t, title);
     assert.equal(await focusedH1(page), h1);
-    assert.equal(await page.locator('nav[aria-label="Main"] a[aria-current="page"]').textContent(), link);
+    assert.equal(await page.locator('nav[aria-label="Inspection tools"] a[aria-current="page"]').textContent(), link);
     // The H1 shows no focus outline across the workspace (only the heading is focused).
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("tabindex")), "-1");
   }
-  await page.goto(base + "#/no-such-screen");
+  await page.evaluate(() => { location.hash = "#/no-such-screen"; });
   await page.waitForFunction(() => document.title === "Not found – Mavframe");
   assert.equal(await focusedH1(page), "Not found");
   await page.locator("#screen-notfound").getByRole("link", { name: "Capture" }).click();

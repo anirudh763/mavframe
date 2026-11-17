@@ -123,9 +123,40 @@ Exact paths `/`, `/anomalies`, `/stream`, `/system` enter decoder, findings, sel
 packet comparison and live service checks. Legacy `#/` still opens the public landing,
 and existing hash/profile workflows retain their routes. Product navigation stays visible
 at mobile widths; tables retain their named scrolling regions. Route-specific filters,
-row selection and tab state remain in query parameters. Anomaly claims are limited to
-the existing parser; control-state analysis is explicitly unavailable.
+row selection and tab state remain in query parameters. The public scenario selector puts
+readable heartbeat/GPS/position/command fields before expert inspection. Parser validation and
+contextual rate observations have separate labels. Context checks use CRC-accepted decoded
+fields and increasing capture timestamps; command receipt never establishes execution or
+authorization. The four synthetic fixture IDs are allowlisted in URL query state, isolated
+per tab, and available offline. Methods, thresholds and provenance remain in disclosures.
 
 Local UI/UX Pro Max searches are preserved under `artifacts/verification/post-restart/`.
 The narrower search matched Data-Dense Dashboard; its unrelated enterprise marketing,
 blue palette and Fira recommendations were rejected in favor of the user's exact brief.
+
+
+## November 16 navigation and utility review
+
+The verified UI/UX Pro Max refinement matches aerospace / Minimalism & Swiss Style. Preserve the existing sand/amber/obsidian instrumentation palette and locally bundled mono/data typography rather than importing its blue/futuristic font suggestions. Keep 4/8/16/24/32 spacing, 44px controls, tabular offsets and semantic CRC/anomaly status. Direct product mode presents Decoder, Anomalies, Stream and System as primary navigation; existing hash inspection/help pages are accessible in Inspection tools. Legacy Pages navigation remains. App/support/installation/offline actions share a labelled disclosure so parser progress and Cancel remain uncluttered. The account menu and theme remain reachable. Mobile sheet focus includes summaries; Escape closes a utility before the whole sheet. Native parser and Wasm are untouched. Route and scenario suites add375/1024 to existing320/768/1440 coverage.
+
+
+## November 16 canonical workspaces and private storage
+
+The four product destinations are `/overview`, `/workbench`, `/reports` and
+`/settings`; `/` renders Overview. A persistent 232px desktop rail becomes the
+existing focus-contained Menu drawer below 1000px. Packet capture, frame selection,
+anomalies, byte inspection and format help remain contextual workflows with their
+existing URLs and history. Sand, amber, obsidian and bundled IBM Plex typography
+remain unchanged. Overview uses actual parser/capture status, Reports contains
+real exports and owned saved runs, Settings holds server accounts, snapshots,
+service diagnostics and the separate browser profile/offline tools.
+
+Saving is explicit. A run stores the actual C/Wasm summary, source SHA-256, parser
+settings and capture artifact, together with custom entry/include XML when used.
+Reports omit raw payloads; the separately saved source artifact contains capture
+bytes. Detailed timelines remain available through local capture exports. The
+256MiB local parser limit is separate from the 32MiB-per-artifact server bound.
+Private APIs are no-store and excluded from the service worker. Browser-only
+hosting exposes honest unavailable server storage, while local parsing continues.
+
+Custom definitions use an XML source container: 1MiB per XML file, 4MiB combined decoded source and 32MiB serialized artifact. Intake and restore share these limits; file count is bounded by those byte budgets and parser limits rather than an arbitrary64-file cap. XMLSerializer text nodes preserve quotes and exact source/include strings.

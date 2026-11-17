@@ -5,6 +5,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { chromium, DOCS, waitParsed } from './browser.mjs';
 
+test('the install manifest is permitted only from the app origin', () => {
+  const html = fs.readFileSync(path.join(DOCS, 'index.html'), 'utf8');
+  const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
+  const directives = policy.split(';').map(part => part.trim());
+  assert.ok(directives.includes("default-src 'none'"));
+  assert.ok(directives.includes("manifest-src 'self'"));
+});
+
 test('Pages Markdown/SQL MIME types cache offline; HTML substitutions fail visibly without replacing a working worker', async () => {
   const types = {
     '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm',
@@ -40,6 +48,8 @@ test('Pages Markdown/SQL MIME types cache offline; HTML substitutions fail visib
     await page.reload();
     await waitParsed(page, 'sample-flight.tlog');
     await context.setOffline(false);
+    // Parsing can finish before the worker's independent status response.
+    await page.waitForFunction(() => document.querySelector('#offline-status').textContent.startsWith('Offline assets verified'), null, { timeout: 10000 });
 
     // A failed update must preserve the previous, complete offline worker.
     invalid = '.md'; revision++;
@@ -53,6 +63,9 @@ test('Pages Markdown/SQL MIME types cache offline; HTML substitutions fail visib
         try { await registration.update(); } catch (error) { reject(error); }
       });
     });
+    await page.waitForFunction(() => document.querySelector('#offline-status').textContent.startsWith('Offline assets verified'), null, { timeout: 10000 });
+    await page.locator('.support-tools > summary').click();
+    assert.equal(await page.locator('#offline-status').isVisible(), true);
     assert.match(await page.locator('#offline-status').innerText(), /^Offline assets verified/);
     assert.equal(await page.locator('#offline-status').getAttribute('data-state'), 'ready');
     await context.setOffline(true);
@@ -65,6 +78,8 @@ test('Pages Markdown/SQL MIME types cache offline; HTML substitutions fail visib
       const failedPage = await failedContext.newPage();
       await failedPage.goto(base + '#/capture');
       await failedPage.waitForFunction(() => document.querySelector('#offline-status').dataset.state === 'error', null, { timeout: 10000 });
+      await failedPage.locator('.support-tools > summary').click();
+      assert.equal(await failedPage.locator('#offline-status').isVisible(), true);
       assert.match(await failedPage.locator('#offline-status').innerText(), /failed.*Reconnect.*reload/);
       assert.equal(await failedPage.evaluate(() => navigator.serviceWorker.controller), null);
       assert.deepEqual(await failedPage.evaluate(() => caches.keys()), []);

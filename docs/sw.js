@@ -1,13 +1,14 @@
-const CACHE = 'mavframe-workbench-2026-11-16-14';
+const CACHE = 'mavframe-workbench-2026-11-16-32';
 const ASSETS = [
   './', 'index.html', 'trust.html', 'CLOUD_SYNC.md', 'SUPABASE_SYNC_SETUP.sql', 'dialect-coverage.json', 'manifest.webmanifest', 'favicon.svg', 'og-card.png',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png', 'icons/apple-touch-icon.png',
-  'mavframe.wasm', 'css/ui.css', 'css/inspector.css',
+  'mavframe.wasm', 'css/ui.css', 'css/inspector.css', 'css/workspace-ui.css',
   'css/atkinson-hyperlegible-latin-400-normal.woff2', 'css/atkinson-hyperlegible-latin-700-normal.woff2',
   'css/OFL-Atkinson-Hyperlegible.txt', 'css/IBMPlexSans-Regular.woff2', 'css/IBMPlexMono-Regular.woff2', 'licenses/IBM-Plex-OFL.txt', 'LICENSE-MAVLink.txt', 'licenses/lucide-ISC.txt',
-  'js/app.js', 'js/core.js', 'js/anatomy.js', 'js/finding.js', 'js/rows.js', 'js/theme.js', 'js/msgdefs.js', 'js/custom-dialect.js',
+  'js/app.js', 'js/dialect-artifact.js', 'js/workspace-ui.js', 'js/scenarios.js', 'js/core.js', 'js/anatomy.js', 'js/finding.js', 'js/rows.js', 'js/theme.js', 'js/msgdefs.js', 'js/custom-dialect.js',
   'js/capture-report.js', 'js/link-health.js', 'js/live-core.js', 'js/serial.js', 'js/tools-worker.js', 'js/nav-icons.js', 'js/local-profile.js', 'js/pwa.js', 'js/team-config.js', 'js/sync-provider.js',
-  'sample/sample-flight.tlog', 'sample/real-flight-redacted.tlog', 'sample/real-flight-provenance.md'
+  'sample/sample-flight.tlog', 'sample/real-flight-redacted.tlog', 'sample/real-flight-provenance.md',
+  'sample/scenarios.md', 'sample/scenario-heartbeat.tlog', 'sample/scenario-gps.tlog', 'sample/scenario-altitude-control.tlog', 'sample/scenario-crc.tlog'
 ];
 const expectedType = path => {
   if (/\.html$/.test(path) || path === './') return 'text/html';
@@ -74,7 +75,7 @@ self.addEventListener('fetch', event => {
     const target = new URL(event.request.url);
     const scope = new URL(self.registration.scope);
     const relative = target.pathname.slice(scope.pathname.length);
-    if (event.request.mode === 'navigate' && target.origin === scope.origin && target.pathname.startsWith(scope.pathname) && ['', 'anomalies', 'stream', 'system'].includes(relative)) {
+    if (event.request.mode === 'navigate' && target.origin === scope.origin && target.pathname.startsWith(scope.pathname) && ['', 'overview', 'workbench', 'reports', 'settings', 'anomalies', 'stream', 'system'].includes(relative)) {
       event.respondWith((async () => {
         try { return await fetch(event.request); }
         catch { return (await caches.open(CACHE)).match(new URL('index.html', scope).href); }

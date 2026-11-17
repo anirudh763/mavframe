@@ -22,7 +22,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/cs
 export async function startServer() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, "http://x").pathname;
-    const rel = ["/", "/anomalies", "/stream", "/system"].includes(pathname) ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+    const rel = ["/", "/overview", "/workbench", "/reports", "/settings", "/anomalies", "/stream", "/system"].includes(pathname) ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
     const file = path.resolve(DOCS, rel);
     if (!file.startsWith(DOCS + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       res.writeHead(404).end();

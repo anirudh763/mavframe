@@ -78,11 +78,11 @@ test('pending finding export rejects a changed capture and retries with the curr
   });
   await page.locator('#export-finding').click();
   await page.waitForFunction(() => typeof window.releaseFindingDigest === 'function');
-  await page.locator('.nav a[data-route="capture"]').click();
+  await page.locator('.product-nav a[data-context="capture"]').click();
   const sample = await fs.readFile(new URL('../../docs/sample/sample-flight.tlog', import.meta.url));
   await page.locator('#file').setInputFiles({ name: 'replacement.bin', mimeType: 'application/octet-stream', buffer: sample.subarray(8, 29) });
   await waitParsed(page, 'replacement.bin');
-  await page.locator('.nav a[data-route="frames"]').click();
+  await page.locator('.product-nav a[data-context="frames"]').click();
   await page.locator('#frame-table tbody a').first().click();
   await page.evaluate(() => window.releaseFindingDigest());
   await page.waitForFunction(() => /Could not export|Exported/.test(document.querySelector('#export-status').textContent));

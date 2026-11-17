@@ -7,13 +7,15 @@ import { rowIndex, rowInfo, filterRows, issuePositions, CANDIDATE_KINDS } from "
 import { anatomy, hexN, msgLabel } from "./anatomy.js";
 import { buildFinding, MAVFRAME_VERSION } from "./finding.js";
 import { buildCaptureReport, reportCsv, reportMarkdown } from "./capture-report.js";
+import { encodeDialectArtifact, decodeDialectArtifact, MAX_DIALECT_ARTIFACT_BYTES } from "./dialect-artifact.js";
 import { wireSerial } from "./serial.js";
 import { NAV_ICONS } from "./nav-icons.js";
-import { getSession, getProfile, initLocalProfiles, signup, login, startGuest, logout, loadWorkspace, saveWorkspace, deleteWorkspace, loadPreferences, savePreferences, createEncryptedBackup, previewEncryptedBackup, commitEncryptedBackup, applyCloudCollection } from "./local-profile.js";
+import { getSession, getProfile, initLocalProfiles, signup, login, startGuest, logout, loadWorkspace, saveWorkspace, deleteWorkspace, loadPreferences, savePreferences, createEncryptedBackup, previewEncryptedBackup, commitEncryptedBackup, applyCloudCollection, invalidatePrivateOperations } from "./local-profile.js";
 import { createSyncProvider } from "./sync-provider.js";
 import { initPwa, acceptUpdate, shareTextOrFile } from "./pwa.js";
 import { MAX_CUSTOM_XML_BYTES, parseCustomDialectXml } from "./custom-dialect.js";
 import { buildLinkHealthTimeline } from "./link-health.js";
+import { SCENARIOS, scenarioById, observeTelemetry } from './scenarios.js';
 
 const SAMPLE = { url: "sample/sample-flight.tlog", name: "sample-flight.tlog" };
 const PAGE = 100;
@@ -27,11 +29,15 @@ const fmt = (n) => n.toLocaleString("en-US");
 
 const state = {
   parser: null, result: null, bytes: null, name: "", isSample: false, busy: false, abort: null,
-  original: null, sourceScope: null, customDialect: null,
+  original: null, sourceScope: null, customDialect: null, customDialectSources: null, savedReport: null,
+  scenarioId: null, observationResult: null, observations: null,
   rowsKey: "", rows: null, lastScreen: null, lastHash: null, prevRoute: null, route: null, keepFocusNext: false,
 };
 let syncProvider = null;
 let syncBoundProfileId = null;
+let privateEpoch = 0;
+let resetAuxiliaryForms = () => {};
+let cancelPrint = () => {};
 const sessionCurrent = (nonce) => !!nonce && getSession()?.nonce === nonce;
 
 function quickStorage(session) {
@@ -126,6 +132,9 @@ function relTime(ts) {
 // #/ is the product page; old workspace URLs remain explicit local-demo aliases.
 function parseHash(hash) {
   if (!hash) {
+    if (location.pathname === '/' && new URLSearchParams(location.search).has('scenario')) history.replaceState(null, '', '/workbench' + location.search);
+    const canonical = ({ '/': 'overview', '/overview': 'overview', '/workbench': 'capture', '/reports': 'reports', '/settings': 'settings' })[location.pathname];
+    if (canonical) return { ...parseHash(`#/${canonical}?${new URLSearchParams(location.search)}`), canonical: canonical === 'capture' ? 'workbench' : canonical };
     const product = ({ "/": "decoder", "/anomalies": "anomalies", "/stream": "stream", "/system": "system" })[location.pathname];
     if (product) {
       const q = new URLSearchParams(location.search);
@@ -155,12 +164,14 @@ function parseHash(hash) {
   const msg = Number.parseInt(q.get("msg") ?? "", 10);
   const page = Number.parseInt(q.get("page") ?? "", 10);
   const params = {
+    scenario: q.get('scenario'),
     check: CHECKS.includes(q.get("check")) ? q.get("check") : "all",
     msg: Number.isInteger(msg) && msg >= 0 ? msg : null,
     page: Number.isInteger(page) && page > 0 ? page : 1,
     tab: TABS.includes(q.get("tab")) ? q.get("tab") : "decoded",
     f: q.get("f") || null,
   };
+  if (['overview', 'reports', 'settings'].includes(path)) return { screen: path, params, workspace: true };
   if (path === "capture") return { screen: "capture", params, workspace: true, appAlias };
   if (path === "help") return { screen: "help", params, workspace: true, appAlias };
   if (path === "frames") return { screen: "frames", params, workspace: true, appAlias };
@@ -171,6 +182,7 @@ function parseHash(hash) {
 
 function buildHash(screen, p = {}) {
   const q = new URLSearchParams();
+  if (state.scenarioId && ['capture', 'frames', 'details'].includes(screen)) q.set('scenario', state.scenarioId);
   if (p.check && p.check !== "all") q.set("check", p.check);
   if (p.msg !== null && p.msg !== undefined) q.set("msg", String(p.msg));
   if (screen === "frames" && p.page > 1) q.set("page", String(p.page));
@@ -211,8 +223,8 @@ function legacyTarget(hash) {
   return buildHash("frames", params);
 }
 
-const SCREENS = { capture: "screen-capture", frames: "screen-frames", details: "screen-details", help: "screen-help", notfound: "screen-notfound", system: "screen-system" };
-const TITLES = { capture: "Capture", frames: "Frames", details: "Frame details", help: "Format help", notfound: "Not found", system: "Health and metrics" };
+const SCREENS = { overview: "screen-overview", reports: "screen-reports", settings: "screen-settings", capture: "screen-capture", frames: "screen-frames", details: "screen-details", help: "screen-help", notfound: "screen-notfound", system: "screen-system" };
+const TITLES = { overview: "Overview", reports: "Reports", settings: "Settings", capture: "Capture", frames: "Frames", details: "Frame details", help: "Format help", notfound: "Not found", system: "Health and metrics" };
 const PUBLIC_SCREENS = { landing: "screen-landing", signup: "screen-auth", login: "screen-auth", profile: "screen-profile", saved: "screen-saved" };
 let internalReturn = "#/app";
 let serialControls = null;
@@ -227,10 +239,22 @@ let pendingCustomDialectFile = null;
 let shareDraft = null;
 let pendingExports = 0;
 const quickStartMemory = { id: null, steps: [false, false, false], dismissed: false };
+let scenarioAttempt = null;
 
 function ensureDemoSample() {
+  const requested = state.route?.params?.scenario;
+  if (requested !== null && requested !== undefined) {
+    const scenario = scenarioById(requested);
+    if (scenario && state.parser && !state.busy && state.scenarioId !== scenario.id && scenarioAttempt !== scenario.id) loadScenario(scenario.id, false);
+    return;
+  }
+  if (state.route?.product) {
+    const query = new URLSearchParams(location.search);
+    const legacyFilters = CHECKS.includes(query.get('check')) || TABS.includes(query.get('tab')) || ['row', 'msg'].some(key => /^\d{1,9}$/.test(query.get(key) || ''));
+    if (query.has('scenario') || !['anomalies', 'stream'].includes(state.route.product) || !legacyFilters) return;
+  }
   const session = getSession();
-  if (state.route?.screen === "system" || !state.parser || !session || session.mode !== "guest" || !state.route?.workspace || state.route.screen === "notfound" || state.result || state.busy || sampleAttemptSession === session.nonce) return;
+  if (["overview", "reports", "settings", "system"].includes(state.route?.screen) || state.route?.canonical || !state.parser || !session || session.mode !== "guest" || !state.route?.workspace || state.route.screen === "notfound" || state.result || state.busy || sampleAttemptSession === session.nonce) return;
   sampleAttemptSession = session.nonce;
   loadSample();
 }
@@ -286,6 +310,8 @@ function renderPublic(route, { keepFocus = false } = {}) {
 function disconnectCloudSync(message = "Cloud connection ended.") {
   syncProvider?.logout(); syncProvider = null; syncBoundProfileId = null;
   if ($("sync-now")) $("sync-now").disabled = true;
+  if ($("sync-password")) $("sync-password").value = "";
+  $("sync-collections")?.replaceChildren();
   if ($("sync-status")) $("sync-status").textContent = message;
 }
 
@@ -361,13 +387,30 @@ function render({ keepFocus = false } = {}) {
   // On wide screens a selected row stays on the Frames screen (the analyzer), so title, H1 and
   // breadcrumb say Frames; on narrow screens #/frames/<row> is its own Frame details screen.
   const shown = route.screen === "details" && wide ? "frames" : route.screen;
-  const productTitle = ({ decoder: "MAVLink frame decoder", anomalies: "Anomaly analysis", stream: "Hex / binary comparison", system: "Health and metrics" })[route.product];
+  const productTitle = route.canonical === "workbench" ? "Workbench" : ({ decoder: "MAVLink frame decoder", anomalies: "Anomaly analysis", stream: "Hex / binary comparison", system: "Health and metrics" })[route.product];
   document.title = `${productTitle || TITLES[shown]} – Mavframe`;
   for (const [name, id] of Object.entries(SCREENS)) $(id).querySelector("h1").textContent = name === screen && productTitle ? productTitle : TITLES[name];
   document.body.classList.toggle("product-mode", !!route.product);
+  document.body.classList.toggle("canonical-mode", !!route.canonical);
+  const primary = ['overview', 'reports', 'settings'].includes(screen) ? screen : screen === 'system' ? 'settings' : 'workbench';
+  for (const link of document.querySelectorAll('[data-canonical]')) {
+    if (link.closest('.canonical-nav') && link.dataset.canonical === primary) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+  }
+  document.querySelector('.product-nav').hidden = primary !== 'workbench';
+  for (const link of document.querySelectorAll('[data-context]')) { if (link.dataset.context === (screen === 'details' ? 'frames' : screen)) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); }
+  const reportControls = document.querySelector('.capture-exports');
+  (screen === 'reports' ? $('reports-exports') : document.querySelector('.capture-toolbar')).append(reportControls);
+  $('reports-current').textContent = state.result ? `${state.name} · ${fmt(state.result.validFrames)} valid frames · ${fmt(state.result.crcErrors)} CRC failures` : 'Load a capture in Workbench to export a report.';
+  $('overview-empty').textContent = state.result ? state.name : 'No capture loaded.';
+  $('overview-values').replaceChildren(...(state.result ? [['Valid frames', state.result.validFrames], ['CRC failures', state.result.crcErrors], ['Capture bytes', state.bytes.length]] : [['Parser', state.parser ? 'Ready' : 'Loading']]).map(([label, value]) => el('div', {}, el('dt', { text: label }), el('dd', { text: typeof value === 'number' ? fmt(value) : value }))));
+  const diagnostics = $('screen-system');
+  if (screen === 'settings') { $('settings-diagnostics').append(diagnostics); diagnostics.hidden = false; diagnostics.querySelector('h1').hidden = true; }
+  else { $('workspace').append(diagnostics); diagnostics.querySelector('h1').hidden = false; }
   $("product-note").hidden = !["anomalies", "stream"].includes(route.product);
-  $("product-note").textContent = route.product === "anomalies" ? "CRC and sequence findings only. Control-state anomaly detection is unavailable. Gap estimates assume a fully observed channel and in-order arrival." : "Compare decoded fields, wire bytes and received/computed CRC for the selected packet.";
+  $("product-note").textContent = route.product === "anomalies" ? "Protocol findings and contextual telemetry observations are separate. Sequence gaps assume a fully observed channel and in-order arrival." : "Compare decoded fields, wire bytes and received/computed CRC for the selected packet.";
   for (const link of document.querySelectorAll("[data-product-route]")) {
+    const path = { decoder: '/workbench', anomalies: '/anomalies', stream: '/stream', system: '/system' }[link.dataset.productRoute];
+    link.href = path + (state.scenarioId && link.dataset.productRoute !== 'system' ? `?scenario=${state.scenarioId}` : '');
     if (link.dataset.productRoute === route.product) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
   }
   const session = getSession();
@@ -382,21 +425,23 @@ function render({ keepFocus = false } = {}) {
   $("workspace-account-label").textContent = session?.mode === "profile" ? (getProfile()?.email || "Local profile") : "Profile";
   renderQuickStart(session);
   document.body.classList.toggle("analyzer-mode", wide && screen === "frames");
-  const crumbs = ["Mavframe", ...(shown === "details" ? ["Frames", "Frame details"] : [TITLES[shown]])];
+  const crumbs = ["Mavframe", ...(shown === "details" ? ["Frames", "Frame details"] : [productTitle || TITLES[shown]])];
   $("crumbs").replaceChildren(...crumbs.map((c, i) => el("li", { "aria-current": i === crumbs.length - 1 ? "page" : null, text: c })));
   const nav = route.screen === "details" ? "frames" : route.screen;
   for (const a of document.querySelectorAll(".nav a[data-route]")) {
+    a.href = `#/${a.dataset.route}${state.scenarioId && ['capture', 'frames'].includes(a.dataset.route) ? '?scenario=' + state.scenarioId : ''}`;
     if (a.dataset.route === nav) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   const back = $("back-link");
   back.hidden = shown !== "details";
   back.href = buildHash("frames", route.params);
 
-  if (screen === "system" && state.lastScreen !== "system") refreshSystem();
+  if (["system", "settings"].includes(screen) && state.lastScreen !== screen) refreshSystem();
   if (screen === "capture") renderCapture();
   if (screen === "frames") renderFrames(route);
   if (screen === "details") renderDetailsScreen(route);
   if (productTitle) $(SCREENS[screen]).querySelector("h1").textContent = productTitle;
+  renderScenario(route, screen);
 
   const changed = state.lastScreen !== null && state.lastScreen !== screen;
   const first = state.lastScreen === null;
@@ -406,6 +451,7 @@ function render({ keepFocus = false } = {}) {
     $(SCREENS[screen]).querySelector("h1").focus();
   }
   ensureDemoSample();
+  publishCurrentCapture();
 }
 
 async function refreshSystem() {
@@ -444,34 +490,54 @@ async function refreshSystem() {
 // ---------- loading ----------
 async function loadCustomDialect(file, includeFiles = []) {
   const output = $('custom-dialect-status');
+  const epoch = workspaceEpoch, nonce = getSession()?.nonce;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(nonce);
   if (!file) return;
   if (file.size > MAX_CUSTOM_XML_BYTES || includeFiles.some(item => item.size > MAX_CUSTOM_XML_BYTES) || file.size + includeFiles.reduce((sum, item) => sum + item.size, 0) > 4 * MAX_CUSTOM_XML_BYTES) { output.textContent = 'Selected XML files exceed the 1 MiB per-file or 4 MiB combined safety limit.'; return; }
   if (!state.parser || state.busy) { output.textContent = 'Wait until the parser is ready and the current analysis finishes.'; return; }
   try {
     const source = await file.text();
+    if (!current()) return;
     const sources = new Map();
     for (const include of includeFiles) {
       if (sources.has(include.name) || include.name === file.name) throw new Error(`Selected XML files contain a duplicate filename: ${include.name}`);
       sources.set(include.name, await include.text());
+      if (!current()) return;
     }
     if (state.busy) throw new Error('The current analysis started while the XML was being read. Wait and retry.');
     const previous = state.customDialect;
+    const previousSources = state.customDialectSources;
+    const definitionSources = { entryName: file.name, source, includes: [...sources] };
+    encodeDialectArtifact(definitionSources);
     const dialect = parseCustomDialectXml(source, undefined, { entryName: file.name, sources });
     if (!state.parser.setCustomExtras(dialect.pairs)) throw new Error('The C/Wasm parser rejected the message-ID table.');
     state.customDialect = dialect;
-  $('custom-dialect-name').textContent = `${file.name} · ${dialect.messageCount} custom messages · ${dialect.fieldCount} fields · ${dialect.includedFiles.length} local includes · ${dialect.includedBuiltins.length} pinned built-ins confirmed · current tab only`;
+    state.customDialectSources = definitionSources;
+  $('custom-dialect-name').textContent = `${file.name} · ${dialect.messageCount} custom messages · ${dialect.fieldCount} fields · ${dialect.includedFiles.length} local includes · ${dialect.includedBuiltins.length} pinned built-ins confirmed · server upload only with Save current run`;
     $('clear-custom-dialect').disabled = false;
     if (state.bytes) {
       output.textContent = 'Rechecking the current capture with the C/Wasm parser and this dialect…';
-      const accepted = await run(state.bytes, state.name, state.isSample);
-      if (!accepted) {
-        state.customDialect = previous;
+      const pending = run(state.bytes, state.name, state.isSample), controller = state.abort;
+      const restorePrevious = () => {
+        if (!current() || state.abort !== controller) return;
+        state.customDialect = previous; state.customDialectSources = previousSources;
         state.parser.setCustomExtras(previous?.pairs || new Uint32Array());
+        $('clear-custom-dialect').disabled = !previous;
+        $('custom-dialect-name').textContent = previousSources ? `${previousSources.entryName} · previous definitions restored` : 'No custom dialect loaded.';
+        publishCurrentCapture();
+      };
+      controller.signal.addEventListener('abort', restorePrevious, { once: true });
+      const accepted = await pending;
+      controller.signal.removeEventListener('abort', restorePrevious);
+      if (!current() || state.abort !== controller) return;
+      if (!accepted) {
+        restorePrevious();
         throw new Error('The current capture could not be rechecked; the previous dialect was restored. See the capture status.');
       }
       output.textContent = `Rechecked ${state.name} with ${dialect.messageCount} custom definitions and ${dialect.includedBuiltins.length} matching pinned built-ins. CRC validation comes from the C/Wasm parser.`;
     } else output.textContent = `Loaded ${dialect.messageCount} custom definitions and verified ${dialect.includedBuiltins.length} pinned built-ins. Frame and CRC checks use the C/Wasm parser.`;
   } catch (error) {
+    if (!current()) return;
     output.textContent = `Custom dialect not loaded: ${error.message}`;
     $('custom-dialect-status').dataset.state = 'error';
   }
@@ -481,16 +547,18 @@ function clearCustomDialect() {
   if (state.busy) return;
   pendingCustomDialectFile = null;
   $('custom-dialect-file').value = ''; $('custom-dialect-includes').value = '';
-  state.customDialect = null;
+  state.customDialect = null; state.customDialectSources = null;
   state.parser?.setCustomExtras(new Uint32Array());
   $('custom-dialect-name').textContent = 'No custom dialect loaded. Maximum 1 MiB per file, 4 MiB combined; 512 custom messages.';
   $('clear-custom-dialect').disabled = true;
-  $('custom-dialect-status').textContent = 'Cleared from this tab. Custom definitions are not saved.';
+  $('custom-dialect-status').textContent = 'Cleared from this tab. Definitions remain included in existing server runs.';
   if (state.bytes) run(state.bytes, state.name, state.isSample).then(ok => { if (ok) $('custom-dialect-status').textContent = 'Capture rechecked with the pinned common/ArduPilotMega definitions only.'; });
 }
 
 function setBusy(busy, cancellable = false) {
   state.busy = busy;
+  for (const id of ['scenario-select', 'run-scenario']) $(id).disabled = busy || !state.parser;
+  $('reset-scenario').disabled = busy || !state.scenarioId;
   for (const id of ["load-sample", "file", "format", "custom-dialect-file", "custom-dialect-includes", "clear-custom-dialect", "print-report", "print-report-detail"]) {
     const control = $(id); if (!control) continue;
     control.disabled = busy || (id === 'clear-custom-dialect' && !state.customDialect) || (id.startsWith('print-report') && !state.bytes);
@@ -498,12 +566,116 @@ function setBusy(busy, cancellable = false) {
   for (const control of document.querySelectorAll('[data-capture-export], #export-finding, #mutate-byte, #restore-capture')) control.disabled = busy;
   for (const button of document.querySelectorAll('[data-capture-export]')) button.disabled = busy || !state.bytes;
   $("cancel").hidden = !(busy && cancellable);
+
+}
+
+function renderScenario(route, screen) {
+  const panel = $('scenario-panel');
+  const drawer = $('scenario-drawer');
+  drawer.hidden = true;
+  panel.hidden = !['capture', 'frames', 'details'].includes(screen);
+  document.body.classList.remove('scenario-expanded');
+  if (panel.hidden) return;
+  const requested = route.params?.scenario;
+  if (!route.product && screen !== 'capture') {
+    drawer.hidden = false;
+    if (panel.parentElement !== drawer) { drawer.append(panel); drawer.open = !!(state.scenarioId || requested); }
+    $(SCREENS[screen]).querySelector('h1').after(drawer);
+    document.body.classList.toggle('scenario-expanded', drawer.open);
+  } else $(SCREENS[screen]).querySelector('h1').after(panel);
+  const selected = scenarioById(requested) || scenarioById(state.scenarioId) || SCENARIOS[0];
+  $('scenario-select').value = selected.id;
+  $('scenario-preview').textContent = selected.preview;
+  if (requested && !scenarioById(requested)) $('scenario-status').textContent = 'Unknown scenario. Choose a listed sample and run it to recover.';
+  $('reset-scenario').disabled = state.busy || !state.scenarioId;
+  const result = state.result;
+  $('scenario-result').hidden = !result;
+  if (!result) return;
+  if (state.observationResult !== result) {
+    state.observations = observeTelemetry(result);
+    state.observationResult = result;
+  }
+  const { telemetry, findings, limited } = state.observations;
+  $('scenario-source').textContent = `${state.name}${state.isSample ? ' · synthetic sample, not a real flight' : ''}`;
+  $('scenario-validation').textContent = `Protocol validation: ${result.validFrames} CRC-valid frames; ${result.crcErrors} CRC failures; ${result.unsupported} unsupported message IDs; ${result.rejects} rejected headers.`;
+  $('scenario-validation').className = result.crcErrors || result.rejects ? 'bad' : '';
+  $('scenario-telemetry').replaceChildren(...telemetry.map(reading => el('section', { class: 'scenario-reading', 'aria-label': `${reading.name}, ${reading.source}` },
+    el('h4', { text: reading.name }), el('p', { class: 'muted small', text: `${reading.source}${Number.isFinite(reading.timestamp) ? ' · ' + new Date(reading.timestamp / 1000).toISOString() : ''}` }),
+    el('dl', {}, ...reading.values.flatMap(([name, value]) => [el('dt', { text: name }), el('dd', { text: value })])))));
+  if (!telemetry.length) $('scenario-telemetry').append(el('p', { text: result.crcErrors ? 'No accepted telemetry in this capture. CRC mismatch means the received checksum differs from the C/Wasm calculation. Retry with Normal heartbeat or load the original capture.' : 'No supported heartbeat, GPS, position or command readings in the retained frames. Inspect the frame list for other message types.' }));
+  $('scenario-findings').replaceChildren(...(findings.length ? findings.map(finding => el('li', { text: finding.text })) : [el('li', { text: 'No contextual threshold observations in the retained supported telemetry. This does not establish flight safety or authenticity.' })]));
+  if (limited) $('scenario-findings').append(el('li', { text: 'Context review limited to the first 10,000 retained CRC-valid frames.' }));
+  const q = new URLSearchParams();
+  if (state.scenarioId) q.set('scenario', state.scenarioId);
+  if (result.crcErrors) { q.set('row', String(filterRows(result, 'crc')[0] ?? 0)); q.set('check', 'crc'); }
+  $('scenario-inspect').href = route.product || route.canonical === 'workbench' ? `/stream${q.size ? '?' + q : ''}` : buildHash('details', { index: Number(q.get('row') || 0), check: result.crcErrors ? 'crc' : 'all', tab: 'bytes' });
+}
+
+async function loadScenario(id, writeURL = true) {
+  const scenario = scenarioById(id);
+  if (!scenario || !state.parser || state.busy) return;
+  state.abort = null;
+  scenarioAttempt = id;
+  const nonce = getSession()?.nonce, epoch = workspaceEpoch;
+  let controller = null;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(nonce) && (!controller || state.abort === controller);
+  setBusy(true);
+  $('scenario-status').textContent = `Loading ${scenario.label}…`;
+  try {
+    const response = await fetch(`sample/scenario-${id}.tlog`, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 4096) throw new Error('The sample has an unexpected size');
+    if (epoch !== workspaceEpoch || !sessionCurrent(nonce)) return;
+    $('format').value = 'tlog';
+    const previousId = state.scenarioId;
+    state.scenarioId = id;
+    setBusy(false);
+    $('scenario-status').textContent = 'Decoding with the C/Wasm parser…';
+    const pending = run(bytes, `scenario-${id}.tlog`, true); controller = state.abort;
+    const accepted = await pending;
+    if (!current()) return;
+    if (!accepted) { state.scenarioId = previousId; throw new Error('Parsing did not complete'); }
+    state.original = { bytes, name: state.name, isSample: true };
+    state.sourceScope = null;
+    if (writeURL) {
+      if (state.route.product || state.route.canonical) {
+        const url = new URL(location.href);
+        url.search = new URLSearchParams({ scenario: id });
+        history.pushState(null, '', url.pathname + url.search);
+      } else history.pushState(null, '', buildHash(state.route.screen === 'capture' ? 'capture' : 'frames'));
+    }
+    if (!$('scenario-drawer').hidden) $('scenario-drawer').open = true;
+    $('scenario-status').textContent = state.result.crcErrors ? 'Demo complete: the parser rejected the corrupted checksum. Choose Normal heartbeat to compare.' : 'Demo complete. Review decoded telemetry and contextual observations below.';
+    markQuickStep(0);
+    render({ keepFocus: true });
+  } catch (error) {
+    if (current()) $('scenario-status').textContent = `Could not run the scenario: ${error.name === 'TimeoutError' ? 'sample download timed out' : error.message}. Retry Run Interactive Demo, or choose another sample. Previous capture retained.`;
+  } finally {
+    if (current() && scenarioAttempt === id) setBusy(false);
+    if (current() && document.activeElement === document.body) $('run-scenario').focus();
+  }
+}
+
+function clearScenarioSelection() {
+  state.scenarioId = null; scenarioAttempt = null;
+  if (location.hash && state.route?.params?.scenario !== null && state.route?.params?.scenario !== undefined) {
+    history.replaceState(null, '', buildHash(state.route.screen, { ...state.route.params, index: state.route.index }));
+  } else if (!location.hash && new URLSearchParams(location.search).has('scenario')) {
+    const url = new URL(location.href); url.searchParams.delete('scenario');
+    history.replaceState(null, '', url.pathname + url.search);
+  }
 }
 
 async function run(bytes, name, isSample) {
   if (state.busy) return;
   const sessionNonce = getSession()?.nonce;
   const epoch = workspaceEpoch;
+  const controller = new AbortController();
+  state.abort = controller;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(sessionNonce) && state.abort === controller;
+  const previousReport = state.savedReport, previousResult = state.result;
+  state.savedReport = null; window.WorkspaceStore?.capture(null);
   setBusy(true, true);
   const progress = $("progress");
   const ptext = $("progress-text");
@@ -511,25 +683,38 @@ async function run(bytes, name, isSample) {
   progress.value = 0;
   const mb = (n) => (n / 1048576).toFixed(1);
   setStatus(`Parsing ${name} (${fmt(bytes.length)} bytes)…`);
-  state.abort = new AbortController();
+  controller.signal.addEventListener('abort', () => {
+    if (!current()) return;
+    if (state.result === previousResult) state.savedReport = previousReport;
+    progress.hidden = ptext.hidden = true;
+    setBusy(false);
+    setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ''));
+    publishCurrentCapture();
+  }, { once: true });
   try {
     const fmtChoice = $("format").value;
     const result = await analyze(bytes, {
       parser: state.parser, name, format: fmtChoice === "auto" ? undefined : fmtChoice, yieldFn: yieldToBrowser,
       customDialect: state.customDialect,
-      signal: state.abort.signal,
+      signal: controller.signal,
       onProgress(done, total) {
+        if (!current() || controller.signal.aborted) return;
         progress.value = total ? Math.round((100 * done) / total) : 100;
         ptext.textContent = `${mb(done)} of ${mb(total)} MB`;
       },
     });
+    if (!current() || controller.signal.aborted) throw new DOMException("parsing cancelled", "AbortError");
     progress.value = 100;
     await yieldToBrowser();
-    if (state.abort.signal.aborted || epoch !== workspaceEpoch || !sessionCurrent(sessionNonce)) throw new DOMException("parsing cancelled", "AbortError");
-    Object.assign(state, { result, bytes, name, isSample, anatomy: null, rows: null, rowsKey: "" });
+    if (!current() || controller.signal.aborted) throw new DOMException("parsing cancelled", "AbortError");
+    const report = await buildCaptureReport({ result: { ...result }, bytes, fileName: name, isSample, summaryOnly: true, customDialectName: state.customDialectSources?.entryName || null });
+    if (!current() || controller.signal.aborted) throw new DOMException('parsing cancelled', 'AbortError');
+    Object.assign(state, { result, bytes, name, isSample, anatomy: null, rows: null, rowsKey: '' });
+    const { tool, source, settings, clock, summary, native_counters, retention, assumptions } = report;
+    state.savedReport = { schema: report.schema, tool, source, settings, clock, summary, native_counters, retention, assumptions };
     fillMessageFilter();
     if (result.validFrames === 0) {
-      setStatus(`No supported MAVLink frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
+      setStatus(result.crcErrors ? `${name}: ${fmt(result.crcErrors)} CRC failures. Received checksums differ from the C/Wasm calculation. Choose Normal heartbeat to compare, or load the original capture.` : `No supported MAVLink frames found in ${name}: ${fmt(result.skippedBytes)} of ${fmt(bytes.length)} bytes skipped` +
         (result.unsupported ? `, ${fmt(result.unsupported)} candidates with message ids outside the pinned dialects` : "") +
         ". Open a .tlog or raw MAVLink v1/v2 capture.", true);
     } else {
@@ -538,11 +723,16 @@ async function run(bytes, name, isSample) {
     render({ keepFocus: true });
     return true;
   } catch (err) {
+    if (!current()) return;
+    if (state.result === previousResult) state.savedReport = previousReport;
     if (err.name === "AbortError") setStatus(`Cancelled parsing ${name}.` + (state.result ? ` Still showing ${state.name}.` : ""));
     else setStatus(`Could not parse ${name}: ${err.message}`, true);
   } finally {
-    progress.hidden = ptext.hidden = true;
-    setBusy(false);
+    if (current()) {
+      progress.hidden = ptext.hidden = true; setBusy(false);
+      const completed = state.result;
+      setTimeout(() => { if (current() && state.result === completed) publishCurrentCapture(); }, 0);
+    }
   }
 }
 
@@ -552,29 +742,33 @@ async function loadSample() {
   if (state.busy) return;
   const sessionNonce = getSession()?.nonce;
   const epoch = workspaceEpoch;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(sessionNonce);
+  state.abort = null;
   setBusy(true);
   setStatus(`Loading ${SAMPLE.name}…`);
   let bytes; let failed = false;
   try {
     const resp = await fetch(SAMPLE.url);
+    if (!current()) return;
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     bytes = new Uint8Array(await resp.arrayBuffer());
-    if (epoch !== workspaceEpoch || !sessionCurrent(sessionNonce)) return;
+    if (!current()) return;
   } catch (err) {
-    if (epoch !== workspaceEpoch || !sessionCurrent(sessionNonce)) return;
+    if (!current()) return;
     setStatus(`Could not load the sample: ${err.message}`, true);
     failed = true;
   } finally {
-    setBusy(false);
+    if (current()) setBusy(false);
   }
   if (failed) { render({ keepFocus: true }); return; }
-  if (await run(bytes, SAMPLE.name, true)) { state.original = { bytes, name: SAMPLE.name, isSample: true }; state.sourceScope = null; markQuickStep(0); }
+  if (await run(bytes, SAMPLE.name, true) && current()) { clearScenarioSelection(); state.original = { bytes, name: SAMPLE.name, isSample: true }; state.sourceScope = null; markQuickStep(0); render({ keepFocus: true }); }
 }
 
 async function openFile(file) {
   if (!file) return;
   const sessionNonce = getSession()?.nonce;
   const epoch = workspaceEpoch;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(sessionNonce);
   if (file.size === 0) {
     setStatus(`${file.name} is empty (0 bytes). Choose a .tlog or raw MAVLink v1/v2 capture.`, true);
     return;
@@ -584,19 +778,21 @@ async function openFile(file) {
     return;
   }
   if (state.busy) return;
+  state.abort = null;
   setBusy(true);
   setStatus(`Reading ${file.name}…`);
   let bytes;
   try {
     bytes = new Uint8Array(await file.arrayBuffer());
-    if (epoch !== workspaceEpoch || !sessionCurrent(sessionNonce)) return;
+    if (!current()) return;
   } catch (err) {
+    if (!current()) return;
     setStatus(`Could not read ${file.name}: ${err.message}`, true);
     return;
   } finally {
-    setBusy(false);
+    if (current()) setBusy(false);
   }
-  if (await run(bytes, file.name, false)) { state.original = { bytes, name: file.name, isSample: false }; state.sourceScope = null; }
+  if (await run(bytes, file.name, false) && current()) { clearScenarioSelection(); state.original = { bytes, name: file.name, isSample: false }; state.sourceScope = null; render({ keepFocus: true }); }
 }
 
 // ---------- Capture ----------
@@ -1202,6 +1398,7 @@ function stepRow(dir) {
 }
 
 async function exportFinding() {
+  const epoch = privateEpoch;
   const snapshot = state.result;
   if (!snapshot || state.busy) return;
   const route = state.route;
@@ -1210,6 +1407,7 @@ async function exportFinding() {
   const includeAll = $("include-payload").checked;
   const f = await buildFinding({ result: snapshot, bytes: state.bytes, parser: state.parser, ref, fileName: state.name,
     isSample: state.isSample, includeAllPayloads: includeAll });
+  if (epoch !== privateEpoch) return;
   if (state.result !== snapshot) throw new Error('The capture changed before export. Export the current finding again.');
   const base = f.file.name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.[^.]*$/, "") || "capture";
   const file = `mavframe-finding-${base}-offset-${f.finding.offset}.json`;
@@ -1239,36 +1437,43 @@ function showSharePreview(draft) {
 
 async function prepareFindingShare() {
   if (!state.result || state.busy) { setStatus("Load and select a frame before sharing a finding.", true); return; }
+  const epoch = privateEpoch;
   const snapshot = state.result; const route = state.route; const ref = rowIndex(snapshot).at(route.index);
   if (!ref) { setStatus("Select a frame or finding before sharing.", true); return; }
   pendingExports++;
   const button = $("share-finding"); button.disabled = true;
   try {
     const finding = await buildFinding({ result: snapshot, bytes: state.bytes, parser: state.parser, ref, fileName: state.name, isSample: state.isSample, includeAllPayloads: $("include-payload").checked });
+    if (epoch !== privateEpoch) return;
     if (state.result !== snapshot) throw new Error("The capture changed before sharing. Select the current finding again.");
     const name = `mavframe-finding-${state.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60)}.json`;
     const text = JSON.stringify(finding, null, 2) + "\n";
     const file = typeof File === "function" ? new File([text], name, { type: "application/json" }) : null;
     showSharePreview({ kind: "finding", title: "Mavframe finding", text, file, name });
-  } catch (error) { $("export-status").textContent = `Could not prepare the finding: ${error.message}`; }
-  finally { pendingExports--; button.disabled = false; }
+  } catch (error) { if (epoch !== privateEpoch) return; $("export-status").textContent = `Could not prepare the finding: ${error.message}`; }
+  finally { pendingExports--; if (epoch === privateEpoch) button.disabled = false; }
 }
 
 async function prepareReportShare() {
   if (!state.result || state.busy) { setStatus("Load a capture before sharing a report.", true); return; }
+  const epoch = privateEpoch;
   const snapshot = state.result; pendingExports++;
   const button = $("share-report"); button.disabled = true;
   try {
     const report = await buildCaptureReport({ result: snapshot, bytes: state.bytes, fileName: state.name, isSample: state.isSample, source: state.sourceScope, customDialectName: state.customDialect?.name || null, selection: reportSelection() });
+    if (epoch !== privateEpoch) return;
     if (state.result !== snapshot) throw new Error("The capture changed before sharing. Try again.");
     showSharePreview({ kind: "report", title: "Mavframe capture summary", text: reportMarkdown(report), file: null });
-  } catch (error) { $("capture-export-status").textContent = `Could not prepare report text: ${error.message}`; }
-  finally { pendingExports--; button.disabled = false; }
+  } catch (error) { if (epoch !== privateEpoch) return; $("capture-export-status").textContent = `Could not prepare report text: ${error.message}`; }
+  finally { pendingExports--; if (epoch === privateEpoch) button.disabled = false; }
 }
 
 async function completeShare() {
   if (!shareDraft) return;
-  const result = await shareTextOrFile(shareDraft);
+  const epoch = privateEpoch, draft = shareDraft;
+  const current = () => epoch === privateEpoch && shareDraft === draft;
+  const result = await shareTextOrFile({ ...draft, isCurrent: current });
+  if (!current()) return;
   if (result.method === "native") $("share-status").textContent = "The share sheet closed. Delivery is controlled by the app you chose; Mavframe cannot verify that it was sent.";
   else if (result.method === "cancelled") $("share-status").textContent = "Share cancelled. Nothing was sent.";
   else if (result.method === "clipboard") $("share-status").textContent = "Copied to the clipboard. Choose where to paste it.";
@@ -1285,8 +1490,10 @@ function reportSelection() {
 
 async function exportCapture(format) {
   if (!state.result || state.busy) return;
+  const epoch = privateEpoch;
   const snapshot = state.result;
   const report = await buildCaptureReport({ result: snapshot, bytes: state.bytes, fileName: state.name, isSample: state.isSample, source: state.sourceScope, customDialectName: state.customDialect?.name || null, selection: reportSelection() });
+  if (epoch !== privateEpoch) return;
   if (state.result !== snapshot) throw new Error('Capture changed before export. Try again.');
   const text = format === 'json' ? JSON.stringify(report, null, 2) + '\n' : format === 'csv' ? reportCsv(report) : reportMarkdown(report);
   const blob = new Blob([text], { type: ({ json: 'application/json', csv: 'text/csv', md: 'text/markdown' })[format] });
@@ -1301,9 +1508,11 @@ async function exportCapture(format) {
 
 async function printCaptureReport() {
   if (!state.result || state.busy) return;
+  const epoch = privateEpoch;
   const snapshot = state.result; const opener = document.activeElement?.matches('#print-report, #print-report-detail') ? document.activeElement : $('print-report'); opener.disabled = true;
   try {
     const report = await buildCaptureReport({ result: snapshot, bytes: state.bytes, fileName: state.name, isSample: state.isSample, source: state.sourceScope, customDialectName: state.customDialect?.name || null, selection: reportSelection() });
+    if (epoch !== privateEpoch) return;
     if (state.result !== snapshot) throw new Error('Capture changed while preparing the printable report. Try again.');
     const section = $('print-report-page'); section.replaceChildren(
       el('h1', { id: 'print-report-title', text: 'Mavframe link-health report' }),
@@ -1324,12 +1533,14 @@ async function printCaptureReport() {
       el('h2', { text: 'Limits and assumptions' }), el('ul', {}, ...report.assumptions.map(note => el('li', { text: note })), ...report.link_health_timeline.assumptions.map(note => el('li', { text: note }))),
       el('p', { text: `Issue detail omissions: ${fmt(report.link_health_timeline.omitted.crcFailures)} CRC failures, ${fmt(report.link_health_timeline.omitted.unsupportedFrames)} unsupported messages and ${fmt(report.link_health_timeline.omitted.sequenceDiscontinuities)} sequence events. CRC is not authentication; signature verification is not performed.` }));
     section.hidden = false; document.body.classList.add('print-report-mode');
-    const cleanup = () => { section.hidden = true; document.body.classList.remove('print-report-mode'); opener.disabled = !state.bytes; opener.focus(); };
+    cancelPrint();
+    const cleanup = () => { cancelPrint(); if (epoch !== privateEpoch || state.result !== snapshot) return; section.hidden = true; document.body.classList.remove('print-report-mode'); opener.disabled = !state.bytes; opener.focus(); };
+    const timer = setTimeout(() => { if (document.body.classList.contains('print-report-mode')) cleanup(); }, 60000);
+    cancelPrint = () => { clearTimeout(timer); window.removeEventListener('afterprint', cleanup); cancelPrint = () => {}; };
     window.addEventListener('afterprint', cleanup, { once: true });
     window.print();
-    setTimeout(() => { if (document.body.classList.contains('print-report-mode')) cleanup(); }, 60000);
-  } catch (error) { $('capture-export-status').textContent = `Could not prepare printable report: ${error.message}`; }
-  finally { opener.disabled = !state.bytes; }
+  } catch (error) { if (epoch !== privateEpoch) return; $('capture-export-status').textContent = `Could not prepare printable report: ${error.message}`; }
+  finally { if (epoch === privateEpoch) opener.disabled = !state.bytes; }
 }
 
 async function mutateByte() {
@@ -1350,7 +1561,7 @@ async function mutateByte() {
 }
 
 // ---------- menu sheet and theme ----------
-const focusables = (root) => [...root.querySelectorAll("a[href], button:not([disabled]), select, input, [tabindex='0']")].filter((e) => e.offsetParent !== null);
+const focusables = (root) => [...root.querySelectorAll("a[href], button:not([disabled]), summary, select, input, [tabindex='0']")].filter((e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility === 'visible' && !e.matches(':disabled') && !e.closest('details:not([open]) > :not(summary)'));
 
 function openSheet() {
   const app = document.querySelector(".app");
@@ -1419,20 +1630,48 @@ function clearWorkspaceForLogout({ remote = false } = {}) {
   if (!remote) requestAnimationFrame(() => $("landing-title").focus());
 }
 
+function resetPrivateAuxiliary() {
+  privateEpoch++;
+  invalidatePrivateOperations();
+  disconnectCloudSync('');
+  resetAuxiliaryForms();
+  cancelPrint(); $('print-report-page').replaceChildren(); $('print-report-page').hidden = true; document.body.classList.remove('print-report-mode');
+  shareDraft = null;
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+}
+
 function clearSensitiveMemory() {
   workspaceEpoch++;
+  resetPrivateAuxiliary();
+  pendingGuestSave = null;
   lastWorkspaceContext = null;
+  shareDraft = null; scenarioAttempt = null;
+  for (const id of ["share-preview", "scenario-telemetry", "scenario-findings", "scenario-source", "scenario-validation", "scenario-status"]) $(id)?.replaceChildren();
   pendingCustomDialectFile = null;
-  state.parser?.setCustomExtras(new Uint32Array()); state.customDialect = null;
+  state.parser?.setCustomExtras(new Uint32Array()); state.customDialect = null; state.customDialectSources = null; state.savedReport = null;
   state.abort?.abort(); state.abort = null;
   serialControls?.clearForLogout().catch(() => {});
-  Object.assign(state, { result: null, bytes: null, name: "", isSample: false, busy: false, original: null, sourceScope: null, rows: null, rowsKey: "", anatomy: null, route: null, prevRoute: null, page: 0 });
+  Object.assign(state, { result: null, bytes: null, name: "", isSample: false, busy: false, original: null, sourceScope: null, scenarioId: null, observations: null, observationResult: null, rows: null, rowsKey: "", anatomy: null, route: null, prevRoute: null, page: 0 });
   setBusy(false);
   $("file").value = ""; $("format").value = "auto";
   $("custom-dialect-file").value = ""; $("custom-dialect-includes").value = "";
-  $("capture-result").hidden = true; $("frame-table").tBodies[0].replaceChildren(); $("detail-body").replaceChildren(); $("detail").hidden = true;
+  $("capture-result").hidden = true; $("frame-table").tBodies[0].replaceChildren(); $("detail").hidden = true;
+  for (const id of ['source', 'frames-counts', 'detail-title', 'detail-summary', 'crc-compare', 'detail-notes', 'panel-header', 'panel-decoded', 'hex', 'field-status', 'timeline', 'timeline-cap', 'link-health-limitations', 'page-info', 'share-preview', 'print-report-page', 'mutation-status', 'overview-values']) $(id)?.replaceChildren();
+  for (const metric of document.querySelectorAll('#metrics dd')) metric.textContent = '–';
+  $('msg-table').tBodies[0].replaceChildren(); $('link-health-rows')?.replaceChildren();
+  $('msg-filter').replaceChildren(el('option', { value: '', text: 'All messages' }));
+  $('overview-empty').textContent = 'No capture loaded.';
+  $('reports-current').textContent = 'Load a capture in Workbench to export a report.';
+  $('timeline-desc').textContent = 'No capture loaded.';
+  $('print-report-page').hidden = true; document.body.classList.remove('print-report-mode');
+  $('progress').hidden = $('progress-text').hidden = true;
+  $('include-payload').checked = false;
   $("live-events")?.replaceChildren(); $("capture-export-status")?.replaceChildren(); $("export-status")?.replaceChildren();
-  setStatus("");
+  $('custom-dialect-name').textContent = 'No custom dialect loaded.';
+  $('custom-dialect-status').textContent = '';
+  $('scenario-result').hidden = true;
+  window.WorkspaceStore?.capture(null);
+  setStatus('');
 }
 function hasUnsavedWork() {
   return state.busy || pendingExports > 0 || Boolean(state.bytes && (!state.isSample || state.name.includes("modified copy"))) || Boolean($("auth-submit")?.disabled) || Boolean(document.querySelector("dialog[open]")) || Boolean(pendingGuestSave);
@@ -1511,23 +1750,27 @@ async function inspectRealCapture() {
   if (hasUnsavedWork() && !window.confirm('Replace the capture currently open in this tab? Export it first if you need to keep a copy.')) return;
   button.disabled = true;
   const originalLabel = button.textContent; button.textContent = 'Loading 5.86 MB capture…';
+  const session = getSession() || startGuest(), epoch = workspaceEpoch;
+  const current = () => epoch === workspaceEpoch && sessionCurrent(session.nonce);
   try {
-    const session = getSession() || startGuest();
     sampleAttemptSession = session.nonce;
     navigate('#/app');
     const response = await fetch('sample/real-flight-redacted.tlog');
+    if (!current()) return;
     if (!response.ok) throw new Error(`HTTP ${response.status}. Reconnect to download the bundled public sample.`);
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!current()) return;
     if (bytes.length !== 5865472) throw new Error('The bundled sample size did not match its provenance record.');
     $('format').value = 'auto';
     const accepted = await run(bytes, 'real-flight-redacted.tlog', false);
+    if (!current()) return;
     if (!accepted) throw new Error('The sample could not be parsed. The C/Wasm parser status has the details.');
     state.original = { bytes, name: 'real-flight-redacted.tlog', isSample: false };
     state.sourceScope = 'DroneKit-LA flight.tlog, CC BY-SA 3.0; derived sample with GPS coordinates redacted and MAVLink CRCs recomputed; see sample/real-flight-provenance.md';
     navigate('#/frames');
     message.textContent = `${fmt(state.result.validFrames)} valid frames, ${fmt(state.result.crcErrors)} CRC failures, ${fmt(state.result.gaps)} estimated sequence gaps. Coordinates were scrubbed; these are public test data, not independently verified flight evidence.`;
   } catch (error) {
-    message.textContent = `Could not inspect the real-world-derived sample: ${error.message}`;
+    if (current()) message.textContent = `Could not inspect the real-world-derived sample: ${error.message}`;
   } finally { button.disabled = false; button.textContent = originalLabel; }
 }
 
@@ -1547,7 +1790,8 @@ function wirePublicActions() {
     $('team-destination').textContent = `Submitting sends only these fields to ${teamEndpoint.origin}. Review that receiver’s privacy policy before sending.`;
     $('team-submit').textContent = 'Submit interest';
   }
-  let teamDraft = null;
+  let teamRequest = null;
+  const teamSubmitLabel = $("team-submit").textContent;
   teamForm.addEventListener('submit', async event => {
     event.preventDefault();
     $('team-error').hidden = true;
@@ -1558,24 +1802,27 @@ function wirePublicActions() {
       $('team-error').textContent = 'Enter an email, team size and use case within 1,000 characters.'; $('team-error').hidden = false; return;
     }
     if (!teamEndpoint) {
-      teamDraft = data;
       $('team-status').textContent = 'Draft saved in this tab only. No request was sent and no enrollment was created.';
       return;
     }
     const submit = $('team-submit'); submit.disabled = true; submit.textContent = 'Submitting…';
+    const epoch = privateEpoch, controller = new AbortController(); teamRequest?.abort(); teamRequest = controller;
+    const current = () => epoch === privateEpoch && teamRequest === controller;
     try {
-      const response = await fetch(teamEndpoint, { method: 'POST', mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(data) });
+      const response = await fetch(teamEndpoint, { method: 'POST', mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, body: JSON.stringify(data), signal: controller.signal });
+      if (!current()) return;
       const acknowledgment = await response.text();
+      if (!current()) return;
       if (!response.ok || acknowledgment.length > 1024) throw new Error(`Receiver returned HTTP ${response.status} or an oversized response.`);
       let receipt;
       try { receipt = JSON.parse(acknowledgment); } catch { throw new Error('Receiver did not return a readable acknowledgement.'); }
       if (!(receipt?.received === true || receipt?.ok === true)) throw new Error('Receiver did not confirm receipt.');
-      teamDraft = null;
       $('team-status').textContent = 'The configured receiver confirmed this interest note. This is not access to a hosted product.';
     } catch (error) {
+      if (!current()) return;
       $('team-error').textContent = `Could not confirm submission: ${error.message} Retry when the receiver is available. Your fields remain in this form and have not been claimed as received.`;
       $('team-error').hidden = false;
-    } finally { submit.disabled = false; submit.textContent = 'Submit interest'; }
+    } finally { if (current()) { teamRequest = null; submit.disabled = false; submit.textContent = teamSubmitLabel; } }
   });
   let feedbackOpener = null;
   const feedbackDialog = $("feedback-dialog");
@@ -1612,105 +1859,153 @@ function wirePublicActions() {
   document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => logout()));
   $("import-pending-save").addEventListener("click", async () => {
     if (!pendingGuestSave || getSession()?.mode !== "profile") return;
+    const epoch = privateEpoch;
     const button = $("import-pending-save"); button.disabled = true;
     try {
       const saved = await saveWorkspace("Imported guest view", pendingGuestSave.context, document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light");
+      if (epoch !== privateEpoch) return;
       pendingGuestSave = null;
       renderPublic({ screen: "profile", params: {} }, { keepFocus: true });
       $("profile-status").textContent = `Saved “${saved.name}”. Only view settings were imported; capture bytes remain temporary in this tab.`;
-    } catch (error) { $("profile-error").textContent = error?.message || "Could not save the guest view settings."; $("profile-error").hidden = false; }
-    finally { button.disabled = false; }
+    } catch (error) { if (epoch !== privateEpoch) return; $("profile-error").textContent = error?.message || "Could not save the guest view settings."; $("profile-error").hidden = false; }
+    finally { if (epoch === privateEpoch) button.disabled = false; }
   });
-  let encryptedBackupStage = null;
+  let encryptedBackupStage = null, backupOperation = 0;
   const backupError = message => { $("backup-error").textContent = message; $("backup-error").hidden = false; $("backup-status").textContent = ""; };
   const clearBackupStage = () => { encryptedBackupStage = null; $("backup-preview-box").hidden = true; $("backup-preview-text").textContent = ""; };
+  const backupTicket = () => { const epoch = privateEpoch, operation = ++backupOperation; return () => epoch === privateEpoch && operation === backupOperation; };
   $("backup-export").addEventListener("click", async () => {
+    const current = backupTicket(), nonce = getSession()?.nonce;
     $("backup-error").hidden = true; $("backup-status").textContent = "Encrypting the profile backup locally…";
     try {
       const backup = await createEncryptedBackup($("backup-passphrase").value);
+      if (!current() || getSession()?.nonce !== nonce) return;
       const url = URL.createObjectURL(new Blob([backup], { type: "application/json" }));
       const link = el("a", { href: url, download: "mavframe-profile-backup.json", hidden: true });
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       $("backup-status").textContent = "Encrypted backup downloaded. Keep its passphrase separately; it cannot be recovered.";
-    } catch (error) { backupError(error.message); }
+    } catch (error) { if (current()) backupError(error.message); }
   });
   $("backup-preview").addEventListener("click", async () => {
+    const current = backupTicket(), nonce = getSession()?.nonce, passphrase = $("backup-passphrase").value;
     $("backup-error").hidden = true; $("backup-status").textContent = ""; clearBackupStage();
     const file = $("backup-file").files?.[0];
     if (!file) { backupError("Choose a backup JSON file first."); return; }
     if (file.size > 1024 * 1024) { backupError("Backup file exceeds the 1 MiB safety limit."); return; }
     try {
       const raw = await file.text();
-      encryptedBackupStage = await previewEncryptedBackup(raw, $("backup-passphrase").value);
+      if (!current() || getSession()?.nonce !== nonce) return;
+      const staged = await previewEncryptedBackup(raw, passphrase);
+      if (!current() || getSession()?.nonce !== nonce) return;
+      encryptedBackupStage = staged;
       const s = encryptedBackupStage;
       $("backup-preview-text").textContent = `Verified encrypted backup for ${s.email}: ${s.workspaceCount} saved views. ${s.existingProfile ? `Matching local profile found; ${s.conflictCount} saved view names overlap. Log in to that profile before restore or merge.` : "No matching local profile; restore creates one using this passphrase as its new local login password."}`;
       $("backup-restore").hidden = false; $("backup-merge").hidden = !s.existingProfile;
       $("backup-preview-box").hidden = false;
-    } catch (error) { backupError(error.message); }
+    } catch (error) { if (current()) backupError(error.message); }
   });
   const finishBackupImport = async mode => {
     if (!encryptedBackupStage) return;
+    const current = backupTicket(), stage = encryptedBackupStage;
     $("backup-error").hidden = true;
     try {
-      const result = await commitEncryptedBackup(encryptedBackupStage.stageId, mode);
+      const result = await commitEncryptedBackup(stage.stageId, mode);
+      if (!current()) return;
+      if (result.createdProfile) clearSensitiveMemory();
       clearBackupStage(); $("backup-passphrase").value = ""; $("backup-file").value = "";
       $("backup-status").textContent = `Backup ${mode === "restore" ? "restored" : "merged"} locally. ${result.workspaceCount} saved views are available; no capture data was imported.`;
       if (result.createdProfile) { render(); }
-    } catch (error) { backupError(error.message); }
+    } catch (error) { if (current()) backupError(error.message); }
   };
   $("backup-restore").addEventListener("click", () => finishBackupImport("restore"));
   $("backup-merge").addEventListener("click", () => finishBackupImport("merge"));
-  $("backup-cancel").addEventListener("click", () => { clearBackupStage(); $("backup-file").value = ""; $("backup-status").textContent = "Import cancelled. Existing profile data was not changed."; });
+  $("backup-cancel").addEventListener("click", () => { backupOperation++; invalidatePrivateOperations(); clearBackupStage(); $("backup-passphrase").value = ""; $("backup-file").value = ""; $("backup-status").textContent = "Import cancelled. Existing profile data was not changed."; });
+  resetAuxiliaryForms = () => {
+    backupOperation++; clearBackupStage(); teamRequest?.abort(); teamRequest = null; feedbackOpener = null;
+    for (const id of ['backup-passphrase','backup-file','sync-project','sync-anon-key','sync-email','sync-password','auth-email','auth-password','context-name','team-email','team-size','team-use','feedback-description','feedback-steps']) $(id).value = '';
+    for (const id of ['backup-status','backup-error','sync-status','sync-error','sync-collections','profile-email','profile-status','profile-error','saved-list','auth-status','auth-error','team-status','team-error','feedback-status','feedback-diagnostics','share-status','share-preview']) $(id).replaceChildren();
+    for (const id of ['backup-error','sync-error','profile-error','auth-error','team-error','feedback-destination']) $(id).hidden = true;
+    $('feedback-destination').href = '#'; $('sync-consent').checked = false;
+    $('auth-password').type = 'password'; $('password-visibility').textContent = 'Show'; $('password-visibility').setAttribute('aria-pressed','false');
+    for (const id of ['backup-export','backup-preview','backup-restore','backup-merge','sync-connect','auth-submit','import-pending-save','team-submit']) $(id).disabled = false;
+    $('sync-connect').textContent = 'Connect cloud account'; $('sync-now').disabled = true; $('team-submit').textContent = teamSubmitLabel;
+    for (const form of document.querySelectorAll('server-workspace form')) form.reset();
+  };
   const syncError = message => { $("sync-error").textContent = message; $("sync-error").hidden = false; $("sync-status").textContent = ""; };
   const localCollection = name => name === "saved_views" ? (loadWorkspace() || []) : (loadPreferences() || { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light" });
   const collectionLabel = name => name === "saved_views" ? "Saved view settings" : "Theme preference";
+  const syncCurrent = provider => { const epoch = privateEpoch, nonce = getSession()?.nonce; return () => epoch === privateEpoch && sessionCurrent(nonce) && syncProvider === provider; };
+  const syncAction = async (button, action) => {
+    const provider = syncProvider, current = syncCurrent(provider);
+    if (!provider?.connected || !current()) return;
+    button.disabled = true;
+    try { await action(provider, current); }
+    catch (error) { if (current()) syncError(error.message); }
+    finally { if (current()) button.disabled = false; }
+  };
   const showSyncCollection = (name, result) => {
+    const valid = syncCurrent(syncProvider);
     const region = el("section", { class: "sync-collection", "aria-labelledby": `sync-${name}-title` });
+    const actionButton = (text, action) => el('button', { type:'button', class:'btn', text, onclick: event => { if (valid() && region.isConnected) syncAction(event.currentTarget, action); } });
     region.append(el("h3", { id: `sync-${name}-title`, text: collectionLabel(name) }));
     if (result.status === "current") region.append(el("p", { text: `Current on this device and cloud at revision ${result.revision}.` }));
     else if (result.status === "synced") region.append(el("p", { text: `Cloud acknowledged revision ${result.revision}.` }));
-    else if (result.status === "pending-upload") {
-      region.append(el("p", { text: "Local changes are pending. They remain on this device until you upload them." }));
-      const upload = el("button", { type: "button", class: "btn", text: "Upload local settings" });
-      upload.addEventListener("click", async () => { upload.disabled = true; try { const saved = await syncProvider.syncCollection(name, localCollection(name), "upload-local"); showSyncCollection(name, saved); } catch (error) { syncError(error.message); } }); region.append(upload);
-    } else if (result.status === "conflict") {
-      region.append(el("p", { role: "status", text: `Different local and cloud versions need your choice. Cloud revision ${result.revision}.` }));
-      const keepLocal = el("button", { type: "button", class: "btn", text: "Keep local and upload" });
-      keepLocal.addEventListener("click", async () => { keepLocal.disabled = true; try { showSyncCollection(name, await syncProvider.syncCollection(name, localCollection(name), "upload-local")); } catch (error) { syncError(error.message); } });
-      const useRemote = el("button", { type: "button", class: "btn", text: "Use cloud version" });
-      useRemote.addEventListener("click", async () => { useRemote.disabled = true; try { const remote = await syncProvider.syncCollection(name, localCollection(name), "use-remote"); if (remote.payload === null) throw new Error("Cloud returned an empty collection; local data was not removed."); await applyCloudCollection(name, remote.payload); $("sync-status").textContent = `Applied the acknowledged cloud ${collectionLabel(name).toLowerCase()} locally.`; showSyncCollection(name, { status: "current", revision: remote.revision }); } catch (error) { syncError(error.message); } });
-      region.append(keepLocal, useRemote);
+    else if (result.status === "pending-upload" || result.status === 'conflict') {
+      region.append(el('p', { role:'status', text:result.status === 'pending-upload' ? 'Local changes are pending. They remain on this device until you upload them.' : `Different local and cloud versions need your choice. Cloud revision ${result.revision}.` }));
+      region.append(actionButton(result.status === 'pending-upload' ? 'Upload local settings' : 'Keep local and upload', async (provider, current) => {
+        const saved = await provider.syncCollection(name, localCollection(name), 'upload-local');
+        if (current() && region.isConnected) showSyncCollection(name, saved);
+      }));
+      if (result.status === 'conflict') region.append(actionButton('Use cloud version', async (provider, current) => {
+        const remote = await provider.syncCollection(name, localCollection(name), 'use-remote');
+        if (!current() || !region.isConnected) return;
+        if (remote.payload === null) throw new Error('Cloud returned an empty collection; local data was not removed.');
+        await applyCloudCollection(name, remote.payload);
+        if (!current() || !region.isConnected) return;
+        $('sync-status').textContent = `Applied the acknowledged cloud ${collectionLabel(name).toLowerCase()} locally.`;
+        showSyncCollection(name, { status:'current', revision:remote.revision });
+      }));
     }
-    if (Number.isSafeInteger(result.revision) && result.revision > 0 && ["current", "conflict", "pending-upload", "synced"].includes(result.status)) {
-      const remove = el("button", { type: "button", class: "btn", text: "Delete cloud copy" });
-      remove.addEventListener("click", async () => { if (!window.confirm(`Delete only the cloud ${collectionLabel(name).toLowerCase()}? This does not delete local settings.`)) return; remove.disabled = true; try { await syncProvider.deleteCollection(name, result.revision); region.replaceChildren(el("h3", { text: collectionLabel(name) }), el("p", { text: "Cloud copy deleted; local settings remain on this device." })); } catch (error) { syncError(error.message); remove.disabled = false; } }); region.append(remove);
-    }
-    const list = $("sync-collections"); const previous = list.querySelector(`#sync-${name}`); region.id = `sync-${name}`; if (previous) previous.replaceWith(region); else list.append(region);
+    if (Number.isSafeInteger(result.revision) && result.revision > 0 && ["current", "conflict", "pending-upload", "synced"].includes(result.status)) region.append(actionButton('Delete cloud copy', async (provider, current) => {
+      if (!window.confirm(`Delete only the cloud ${collectionLabel(name).toLowerCase()}? This does not delete local settings.`)) return;
+      await provider.deleteCollection(name, result.revision);
+      if (current() && region.isConnected) region.replaceChildren(el('h3', { text:collectionLabel(name) }), el('p', { text:'Cloud copy deleted; local settings remain on this device.' }));
+    }));
+    const list = $("sync-collections"), previous = list.querySelector(`#sync-${name}`); region.id = `sync-${name}`;
+    if (previous) previous.replaceWith(region); else list.append(region);
   };
   $("sync-connect").addEventListener("click", async () => {
     $("sync-error").hidden = true; $("sync-status").textContent = "";
     if (getSession()?.mode !== "profile") { syncError("Log in to a local profile before connecting its saved settings to a cloud account."); return; }
     if (!$("sync-consent").checked) { syncError("Confirm the collection scope before connecting."); return; }
     const button = $("sync-connect"); button.disabled = true;
+    let provider;
+    try { provider = createSyncProvider({ projectUrl:$("sync-project").value.trim(), anonKey:$("sync-anon-key").value.trim() }); }
+    catch (error) { syncError(error.message); button.disabled = false; return; }
+    syncProvider?.logout(); syncProvider = provider; syncBoundProfileId = null;
+    $("sync-collections").replaceChildren(); $("sync-now").disabled = true;
+    const current = syncCurrent(provider);
     try {
-      syncProvider = createSyncProvider({ projectUrl: $("sync-project").value.trim(), anonKey: $("sync-anon-key").value.trim() });
-      const connected = await syncProvider.connect($("sync-email").value.trim(), $("sync-password").value);
+      await provider.connect($("sync-email").value.trim(), $("sync-password").value);
+      if (!current()) return;
       syncBoundProfileId = getSession()?.id || null;
       $("sync-password").value = ""; $("sync-now").disabled = false;
-      $("sync-status").textContent = `Connected to the configured cloud account for this tab. Local profile credentials are separate; the provider token remains in memory only.`;
+      $("sync-status").textContent = 'Connected to the configured cloud account for this tab. Local profile credentials are separate; the provider token remains in memory only.';
       button.textContent = "Reconnect cloud account";
-    } catch (error) { syncProvider?.logout(); syncProvider = null; syncError(error.message); }
-    finally { button.disabled = false; }
+    } catch (error) { provider.logout(); if (current()) { syncProvider = null; syncError(error.message); button.disabled = false; } }
+    finally { if (current()) button.disabled = false; }
   });
-  $("sync-now").addEventListener("click", async () => {
+  $("sync-now").addEventListener("click", () => {
     if (!syncProvider?.connected) { syncError("Connect the cloud account first."); return; }
     $("sync-error").hidden = true; $("sync-status").textContent = "Checking acknowledged cloud revisions…";
-    const button = $("sync-now"); button.disabled = true;
-    try {
-      for (const name of ["saved_views", "preferences"]) showSyncCollection(name, await syncProvider.syncCollection(name, localCollection(name)));
-      $("sync-status").textContent = "Sync check finished. Pending local changes are labeled and are not reported as uploaded.";
-    } catch (error) { syncError(error.message); }
-    finally { button.disabled = false; }
+    syncAction($("sync-now"), async (provider, current) => {
+      for (const name of ['saved_views','preferences']) {
+        const result = await provider.syncCollection(name, localCollection(name));
+        if (!current()) return;
+        showSyncCollection(name, result);
+      }
+      if (current()) $("sync-status").textContent = "Sync check finished. Pending local changes are labeled and are not reported as uploaded.";
+    });
   });
   $("quickstart-dismiss").addEventListener("click", () => { loadQuickStart(); quickStartMemory.dismissed = true; saveQuickStart(); renderQuickStart(); });
   $("quickstart-restart").addEventListener("click", () => { loadQuickStart(); quickStartMemory.dismissed = false; quickStartMemory.steps = [false, false, false]; saveQuickStart(); renderQuickStart(); $("quickstart").open = true; });
@@ -1724,6 +2019,7 @@ function wirePublicActions() {
   }));
   $("auth-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    let epoch = privateEpoch;
     const errorNode = $("auth-error"); const status = $("auth-status"); const button = $("auth-submit");
     errorNode.hidden = true; errorNode.textContent = ""; status.textContent = ""; button.disabled = true;
     const password = $("auth-password").value; const authRoute = parseHash(location.hash).screen; const previous = getSession();
@@ -1739,8 +2035,9 @@ function wirePublicActions() {
       status.textContent = authRoute === "login" ? "Checking this browser’s profile…" : "Preparing the local password record…";
       if (authRoute === "login") await login($("auth-email").value, password);
       else await signup($("auth-email").value, password);
+      if (epoch !== privateEpoch) return;
       const current = getSession();
-      if (previous && previous.id !== current?.id && !explicitImport) clearSensitiveMemory();
+      if (previous && previous.id !== current?.id) { if (explicitImport) resetPrivateAuxiliary(); else clearSensitiveMemory(); epoch = privateEpoch; }
       $("auth-password").value = "";
       let saved = []; let preferences = null; let savedWarning = "";
       try { saved = loadWorkspace() || []; } catch (error) { savedWarning = "Saved views could not be read: " + error.message; }
@@ -1754,12 +2051,13 @@ function wirePublicActions() {
       render();
       if (savedWarning) setStatus(savedWarning, true);
     } catch (cause) {
+      if (epoch !== privateEpoch) return;
       status.textContent = ""; errorNode.textContent = cause?.message || "Could not use this local profile."; errorNode.hidden = false;
       const message = errorNode.textContent.toLowerCase();
       if (message.includes("email")) { $("auth-email").setAttribute("aria-invalid", "true"); $("auth-email").focus(); }
       else if (message.includes("password") || message.includes("did not match")) { $("auth-password").setAttribute("aria-invalid", "true"); $("auth-password").focus(); }
     }
-    finally { button.disabled = false; }
+    finally { if (epoch === privateEpoch) button.disabled = false; }
   });
   $("password-visibility").addEventListener("click", (event) => {
     const input = $("auth-password"); const show = input.type === "password";
@@ -1767,12 +2065,13 @@ function wirePublicActions() {
   });
   $("logout-button").addEventListener("click", () => logout());
   $("save-context-form").addEventListener("submit", async (event) => {
-    event.preventDefault(); $("profile-error").hidden = true;
+    event.preventDefault(); const epoch = privateEpoch; $("profile-error").hidden = true;
     try {
       const theme = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
       const saved = await saveWorkspace($("context-name").value, currentSafeContext(), theme);
+      if (epoch !== privateEpoch) return;
       $("profile-status").textContent = `Saved “${saved.name}”. Only filters, selection context and theme are stored; capture data is not.`;
-    } catch (cause) { $("profile-error").textContent = cause?.message || "Could not save this view."; $("profile-error").hidden = false; }
+    } catch (cause) { if (epoch !== privateEpoch) return; $("profile-error").textContent = cause?.message || "Could not save this view."; $("profile-error").hidden = false; }
   });
   $("landing-menu").addEventListener("click", () => {
     const button = $("landing-menu"); const open = button.getAttribute("aria-expanded") !== "true";
@@ -1834,9 +2133,68 @@ function wirePublicActions() {
   restart();
 }
 
+function currentSavedRun() {
+  if (!state.savedReport || state.busy || !state.bytes || state.savedReport.settings.dialect !== (state.customDialectSources?.entryName || 'Pinned common and ArduPilotMega definitions')) return null;
+  return { kind: 'capture', title: state.name.slice(0, 200), payload: { ...state.savedReport,
+    source: { ...state.savedReport.source, scope: state.sourceScope || 'selected local file' },
+    scenario_id: state.scenarioId, custom_definitions: !!state.customDialectSources,
+    selected_finding: reportSelection(), evidence: 'Actual C/Wasm capture summary; raw source in owned artifact. Detailed timelines remain in local capture exports.' } };
+}
+function publishCurrentCapture() {
+  const store = window.WorkspaceStore, current = currentSavedRun();
+  if (store?.state.enabled && current && JSON.stringify(current) !== JSON.stringify(store.state.current)) store.capture(current, { autosave: false });
+}
+
 // ---------- wiring ----------
 function wire() {
   wirePublicActions();
+  window.WorkspaceStore?.register({
+    readCurrent: currentSavedRun,
+    readArtifacts() {
+      if (!state.bytes) return [];
+      const files = [{ name: 'capture-source.bin', blob: new Blob([state.bytes]) }];
+      if (state.customDialectSources) files.push({ name: 'custom-definitions.xml', blob: new Blob([encodeDialectArtifact(state.customDialectSources)], { type: 'application/xml' }) });
+      return files;
+    },
+    onLogout() { clearSensitiveMemory(); sampleAttemptSession = getSession()?.nonce; render({ keepFocus: true }); },
+    async restore(saved, files, isCurrent) {
+      if (saved.kind !== 'capture' || saved.payload?.schema !== 'mavframe-capture/1' || !files[0] || files[0].size > 32 * 1024 * 1024) throw new Error('This saved run has no supported capture source.');
+      const epoch = workspaceEpoch;
+      const current = () => isCurrent() && epoch === workspaceEpoch;
+      await parserReady;
+      if (!current()) return;
+      const bytes = new Uint8Array(await files[0].arrayBuffer());
+      if (!current()) return;
+      let dialect = null, sources = null;
+      if (saved.payload.custom_definitions) {
+        if (!files[1] || files[1].size > MAX_DIALECT_ARTIFACT_BYTES) throw new Error('Custom definitions are missing or exceed the limit.');
+        const text = await files[1].text();
+        if (!current()) return;
+        sources = decodeDialectArtifact(text);
+        dialect = parseCustomDialectXml(sources.source, undefined, { entryName: sources.entryName, sources: new Map(sources.includes) });
+      }
+      if (!current()) return;
+      if (state.busy) throw new Error('Finish or cancel the current parse before opening a saved input.');
+      state.parser.setCustomExtras(dialect?.pairs || new Uint32Array()); state.customDialect = dialect; state.customDialectSources = sources;
+      $('format').value = ['raw', 'tlog'].includes(saved.payload.source?.format) ? saved.payload.source.format : 'auto';
+      navigate('/workbench');
+      const ok = await run(bytes, String(saved.payload.source?.name || saved.title).slice(0, 200), !!saved.payload.source?.synthetic);
+      if (!current()) return;
+      if (!ok) throw new Error('The C/Wasm parser could not reopen this source.');
+      if (state.savedReport?.source.sha256 !== saved.payload.source.sha256) throw new Error('Source hash differs from stored evidence. Export and review this input.');
+      state.sourceScope = saved.payload.source.scope; state.original = { bytes, name: state.name, isSample: state.isSample };
+      state.scenarioId = scenarioById(saved.payload.scenario_id)?.id || null;
+      $('custom-dialect-name').textContent = sources ? `${sources.entryName} · restored custom definitions` : 'No custom dialect loaded.';
+      render({ keepFocus: true });
+    },
+  });
+  $('overview-demo').addEventListener('click', async () => { navigate('/workbench'); await loadScenario('heartbeat'); });
+  $('settings-offline').addEventListener('click', () => $('offline-prepare').click());
+  $('settings-theme').addEventListener('click', toggleTheme);
+  for (const link of document.querySelectorAll('[data-canonical], [data-context]')) link.addEventListener('click', event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault(); closeSheet(false); navigate(link.getAttribute('href'));
+  });
   const bindDialog = (opener, dialog, closer, first) => {
     $(opener).addEventListener('click', () => { $(dialog).showModal(); $(first).focus(); });
     $(closer).addEventListener('click', () => $(dialog).close());
@@ -1857,10 +2215,15 @@ function wire() {
   $("cancel-share").addEventListener("click", () => $("share-dialog").close());
   $("confirm-share").addEventListener("click", () => completeShare());
   $("copy-share").addEventListener("click", async () => {
+    const epoch = privateEpoch, draft = shareDraft;
+    const current = () => epoch === privateEpoch && shareDraft === draft;
+    if (!draft) return;
     try {
-      await navigator.clipboard.writeText(shareDraft?.text || "");
+      await navigator.clipboard.writeText(draft.text);
+      if (!current()) return;
       $("share-status").textContent = "Copied to the clipboard. Choose where to paste it.";
     } catch {
+      if (!current()) return;
       const range = document.createRange(); range.selectNodeContents($("share-preview")); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
       $("share-status").textContent = "Clipboard access is unavailable. The preview text is selected so you can copy it manually.";
       $("share-preview").focus();
@@ -1885,9 +2248,9 @@ function wire() {
   });
   $("defer-update").addEventListener("click", () => setUpdateNotice(false));
   const names = { capture: 'file-search', frames: 'scan-line', help: 'book-open' };
-  for (const link of document.querySelectorAll('.nav a[data-route]')) {
+  for (const link of document.querySelectorAll('.nav a[data-route], .canonical-nav a[data-icon]')) {
     const icon = svgEl('svg', { class: 'nav-icon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
-    for (const [tag, attrs] of NAV_ICONS[names[link.dataset.route]]) icon.append(svgEl(tag, attrs));
+    for (const [tag, attrs] of NAV_ICONS[link.dataset.icon || names[link.dataset.route]]) icon.append(svgEl(tag, attrs));
     link.prepend(icon);
   }
   serialControls = wireSerial({
@@ -1920,6 +2283,13 @@ function wire() {
   $("menu-btn").addEventListener("click", openSheet);
   $("sheet-close").addEventListener("click", () => closeSheet(true));
   $("scrim").addEventListener("click", () => closeSheet(true));
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    const menu = event.target.closest?.('.workspace-suite[open], .account-menu[open], .public-account[open], .support-tools[open], .inspection-tools[open]');
+    if (!menu) return;
+    event.preventDefault(); event.stopPropagation();
+    menu.open = false; menu.querySelector('summary')?.focus();
+  }, true);
   document.addEventListener("keydown", onSheetKey);
   for (const a of document.querySelectorAll(".nav a, .wordmark a")) a.addEventListener("click", () => closeSheet(false));
   WIDE.addEventListener("change", () => { closeSheet(false); render({ keepFocus: true }); });
@@ -1938,6 +2308,24 @@ function wire() {
     event.preventDefault(); navigate(a.getAttribute("href"));
   });
   $("refresh-system").addEventListener("click", refreshSystem);
+  $('scenario-select').replaceChildren(...SCENARIOS.map(scenario => el('option', { value: scenario.id, text: scenario.label })));
+  $('scenario-select').addEventListener('change', event => { $('scenario-preview').textContent = scenarioById(event.target.value).preview; });
+  $('run-scenario').addEventListener('click', () => loadScenario($('scenario-select').value));
+  $('dismiss-scenario-guide').addEventListener('click', () => { $('scenario-guide').open = false; $('scenario-guide').querySelector('summary').focus(); });
+  $('scenario-drawer').addEventListener('toggle', () => { if (!$('scenario-drawer').hidden) render({ keepFocus: true }); });
+  $('reset-scenario').addEventListener('click', () => {
+    if (state.busy || !state.scenarioId) return;
+    clearScenarioSelection();
+    sampleAttemptSession = getSession()?.nonce;
+    Object.assign(state, { result: null, bytes: null, name: '', isSample: false, original: null, sourceScope: null, savedReport: null, anatomy: null, rows: null, rowsKey: '' }); window.WorkspaceStore?.capture(null);
+    const url = new URL(location.href); url.search = '';
+    history.pushState(null, '', state.route.product || state.route.canonical ? url.pathname : buildHash('capture'));
+    $('msg-filter').replaceChildren(el('option', { value: '', text: 'All messages' }));
+    $('scenario-status').textContent = 'Demo reset. Choose a sample and run again.';
+    setStatus('Demo reset. Open a capture or run a sample scenario.');
+    setBusy(false); render({ keepFocus: true });
+    $('run-scenario').focus();
+  });
   document.addEventListener("click", event => {
     const link = event.target.closest('a[href^="/anomalies"], a[href^="/stream"]');
     if (!link || link.hasAttribute("data-product-route") || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -1961,7 +2349,7 @@ function wire() {
   });
   $("clear-custom-dialect").addEventListener("click", clearCustomDialect);
   $("format").addEventListener("change", () => { if (state.bytes) run(state.bytes, state.name, state.isSample); });
-  for (const button of document.querySelectorAll('[data-capture-export]')) button.addEventListener('click', () => exportCapture(button.dataset.captureExport).catch(error => { $('capture-export-status').textContent = `Could not export: ${error.message}`; }));
+  for (const button of document.querySelectorAll('[data-capture-export]')) button.addEventListener('click', () => { const epoch = privateEpoch; exportCapture(button.dataset.captureExport).catch(error => { if (epoch === privateEpoch) $('capture-export-status').textContent = `Could not export: ${error.message}`; }); });
   $('mutate-byte').addEventListener('click', () => mutateByte().catch(error => { $('mutation-status').textContent = error.message; }));
   $('restore-capture').addEventListener('click', async () => {
     if (state.original && !state.busy) {
@@ -2002,7 +2390,8 @@ function wire() {
   $("hex").addEventListener("click", onHexClick);
   $("hex").addEventListener("keydown", onHexKey);
   $("export-finding").addEventListener("click", () => {
-    exportFinding().catch((err) => { $("export-status").textContent = `Could not export the finding: ${err.message}`; });
+    const epoch = privateEpoch;
+    exportFinding().catch((err) => { if (epoch === privateEpoch) $("export-status").textContent = `Could not export the finding: ${err.message}`; });
   });
   $("prev-row").addEventListener("click", () => stepRow(-1));
   $("next-row").addEventListener("click", () => stepRow(1));
@@ -2013,15 +2402,17 @@ async function main() {
   render();
   setBusy(true);
   try {
-    state.parser = await loadParser("mavframe.wasm");
+    state.parser = await (parserReady = loadParser("mavframe.wasm"));
   } catch (err) {
     setStatus(`Could not load the parser (mavframe.wasm): ${err.message}`, true);
+    $('scenario-status').textContent = 'The C/Wasm parser could not load. Reconnect and reload this page to retry.';
     setBusy(false);
     $("load-sample").disabled = true;
     render({ keepFocus: true });
     return;
   }
   setBusy(false);
+  if (!state.result) setStatus("Parser ready. Open a capture or run a sample.");
   ensureDemoSample();
   if (!state.result) render({ keepFocus: true });
 }

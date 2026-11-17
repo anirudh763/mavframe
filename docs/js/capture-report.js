@@ -4,7 +4,7 @@ import { buildLinkHealthTimeline, linkHealthMarkdown } from './link-health.js';
 const number = value => Number.isFinite(value) ? value : null;
 const rate = (count, first, last, reversed) => !reversed && count > 1 && last > first ? (count - 1) * 1e6 / (last - first) : null;
 
-export async function buildCaptureReport({ result: r, bytes, fileName, isSample = false, source = null, customDialectName = null, selection = null }) {
+export async function buildCaptureReport({ result: r, bytes, fileName, isSample = false, source = null, customDialectName = null, selection = null, summaryOnly = false }) {
   if (!r || r.bytes !== bytes) throw new Error('The capture changed. Export the current analysis again.');
   if (r._sha256 === undefined) Object.defineProperty(r, '_sha256', { value: await sha256Hex(bytes), enumerable: false });
   const duration = !r.timestampReversals && r.endTs > r.firstTs ? (r.endTs - r.firstTs) / 1e6 : null;
@@ -25,10 +25,12 @@ export async function buildCaptureReport({ result: r, bytes, fileName, isSample 
       sequence: Number.isSafeInteger(selection.sequence) ? selection.sequence : null,
       field: typeof selection.field === 'string' && selection.field.length <= 128 ? selection.field : null,
     } : null,
+    ...(summaryOnly ? {} : {
     messages: r.messages.map(m => ({ id: m.msgid, name: m.name, valid_frames: m.count, crc_failures: m.crcErrors, rate_hz: r.timestampReversals ? null : number(m.rateHz), senders: m.sources.map(s => ({ system: s.sysid, component: s.compid, valid_frames: s.count, rate_hz: r.timestampReversals ? null : number(s.rateHz) })) })),
     senders: r.senders.map(s => ({ system: s.sysid, component: s.compid, valid_frames: s.frames, crc_candidates: s.crcErrors, sequence_gaps: s.gaps, missing_estimate: s.missing, duplicates: s.duplicates, reorders: s.reorders, missing_fraction_estimate: s.frames + s.missing ? s.missing / (s.frames + s.missing) : null, rate_hz: rate(s.frames, s.firstTs, s.lastTs, r.timestampReversals) })),
     sequence_timeline: r.sequenceTimeline.map(i => ({ kind: i.kind, offset: i.off, system: i.sysid, component: i.compid, previous_sequence: i.prevSeq, sequence: i.seq, missing_estimate: i.missing || 0, timestamp_us: number(i.ts), possible_reset: !!i.reset })),
     link_health_timeline: buildLinkHealthTimeline(r),
+    }),
     assumptions: [...ASSUMPTIONS, 'Sequence gaps are inferred, not measured RF packet loss; resets, reordering, merged links and recorder loss can produce them.', 'CRC candidate header identities are untrusted when their checksum fails.', 'Rates use record timestamps and are unavailable without a positive interval or when the capture clock reverses. Raw payloads are omitted.'],
   };
 }

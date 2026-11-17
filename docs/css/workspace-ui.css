@@ -1,0 +1,11 @@
+server-workspace{display:block;margin-block:16px;padding:16px;border:1px solid var(--border,var(--line,#b6c1ca));border-radius:4px;background:var(--bg,var(--paper,#fff));color:var(--fg,var(--ink,#25364b))}
+server-workspace h2,server-workspace h3{margin-top:0}server-workspace p{overflow-wrap:anywhere}server-workspace .server-workspace-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+server-workspace button,server-workspace select,server-workspace input,server-workspace summary{min-height:44px;font:inherit;max-width:100%;color:inherit}
+server-workspace input,server-workspace select{background:var(--bg,#fff);padding:8px;border:1px solid var(--border-strong,var(--line,#b6c1ca));border-radius:4px;min-width:0}
+server-workspace form,server-workspace label{display:grid;gap:8px}server-workspace form{max-width:520px;margin-block:12px}server-workspace button,server-workspace summary{cursor:pointer}
+server-workspace :focus-visible{outline:3px solid var(--focus,var(--accent,#2355ba));outline-offset:3px}server-workspace [hidden]{display:none!important}
+server-workspace .server-run,server-workspace .server-snapshot{padding-block:16px;border-top:1px solid var(--border,var(--line,#b6c1ca))}server-workspace pre{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+server-workspace summary{display:flex;align-items:center}server-workspace .server-save-status{min-height:1.5em}server-workspace .server-workspace-actions select{flex:0 1 320px}
+server-workspace[view="workbench"]{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 12px;margin-block:8px}
+server-workspace[view="workbench"] .server-save-status{flex:1 1 180px;order:1;margin:0}server-workspace[view="workbench"] .server-runs{display:none}
+@media(max-width:600px){server-workspace{padding:12px}server-workspace input,server-workspace select{font-size:16px}server-workspace .server-workspace-actions select{flex-basis:100%;width:100%}}

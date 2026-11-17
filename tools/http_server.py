@@ -26,6 +26,8 @@ ROUTES = {
     'cuereport': ('/', '/ablation', '/statistics', '/system'),
     'issue-warehouse': ('/', '/taxonomy', '/export', '/system'),
 }
+CANONICAL_ROUTES = ('/overview', '/workbench', '/reports', '/settings')
+ROUTES = {app: (*paths, *CANONICAL_ROUTES) for app, paths in ROUTES.items()}
 ENDPOINTS = ('/healthz', '/readyz', '/metrics', '/api/system')
 REQUIRED_ASSETS = {
     'hashwing': ('console/precache.json',),
@@ -192,6 +194,8 @@ class AppServer(ThreadingHTTPServer):
             self.totals['errors_total'] += int(status >= 400 or transfer_failed)
 
     def ready(self):
+        if self.persistence is not None and not self.persistence.ready():
+            return False
         if not self.asset_config_valid:
             return False
         for asset in self.required_assets:
@@ -227,6 +231,7 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_one_request(self):
         started = time.monotonic()
         self.trace_id, self.route, self.status_code = uuid.uuid4().hex, 'bad_request', None
+        self.private_api = False
         self.raw_requestline = b''
         self.response_headers_sent = self.transfer_failed = False
         try:
@@ -265,6 +270,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         for name, value in RESPONSE_HEADERS:
+            if name == 'Cache-Control' and getattr(self, 'private_api', False):
+                continue
             self.send_header(name, value)
         self.send_header('X-Request-ID', getattr(self, 'trace_id', ''))
         super().end_headers()
@@ -275,6 +282,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
+        if getattr(self, 'private_api', False):
+            self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         if not head:
             self.wfile.write(data)
@@ -284,6 +293,66 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         self._get()
+
+    def do_POST(self):
+        if self.server.persistence is None or not self.path.startswith('/api/'):
+            self.send_error(501)
+            return
+        if not self._api():
+            self._json(404, {'error': 'Unknown API endpoint'})
+
+    do_PUT = do_PATCH = do_DELETE = do_POST
+
+    def _api(self, head=False):
+        if self.server.persistence is None or not self.path.startswith('/api/'):
+            return False
+        self.route = '/'.join(urlsplit(self.path).path.split('/')[:3])
+        self.private_api = True
+        body, upload_slot = b'', False
+        try:
+            if self.headers.get('Transfer-Encoding'):
+                self.close_connection = True
+                self._json(400, {'error': 'Transfer-Encoding is unsupported'}, head)
+                return True
+            length_text = self.headers.get('Content-Length', '0')
+            if not re.fullmatch(r'[0-9]{1,10}', length_text) or len(self.headers.get_all('Content-Length', [])) > 1:
+                self.close_connection = True
+                self._json(400, {'error': 'Invalid Content-Length'}, head)
+                return True
+            length = int(length_text)
+            artifact = urlsplit(self.path).path == '/api/artifacts'
+            if length > (32 * 1024 * 1024 if artifact else 65536):
+                self.close_connection = True
+                self._json(413, {'error': 'Request exceeds the upload limit'}, head)
+                return True
+            if length > 65536:
+                upload_slot = self.server.upload_slot.acquire(blocking=False)
+                if not upload_slot:
+                    self.close_connection = True
+                    self._json(429, {'error': 'Another upload is in progress; retry later'}, head)
+                    return True
+            if length:
+                body = self.rfile.read(length)
+                if len(body) != length:
+                    self.close_connection = True
+                    self._json(400, {'error': 'Incomplete request body'}, head)
+                    return True
+            result = self.server.persistence.handle('GET' if head else self.command, self.path, dict(self.headers), body, self.client_address[0])
+            if result is None:
+                return False
+            status, headers, content = result
+            self.send_response(status)
+            for name, value in headers.items():
+                if name.lower() != 'content-length':
+                    self.send_header(name, value)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            if not head:
+                self.wfile.write(content)
+            return True
+        finally:
+            if upload_slot:
+                self.server.upload_slot.release()
 
     def _get(self, head=False):
         self.status_code = 500
@@ -308,12 +377,14 @@ class Handler(SimpleHTTPRequestHandler):
                     self._json(200, {'status': 'ok', 'service': self.server.app}, head)
                 elif path == '/readyz':
                     ready = self.server.ready()
-                    self._json(200 if ready else 503, {'status': 'ready' if ready else 'not_ready', 'scope': READINESS_SCOPE}, head)
+                    scope = 'HTTP assets and application persistence availability' if self.server.persistence else READINESS_SCOPE
+                    self._json(200 if ready else 503, {'status': 'ready' if ready else 'not_ready', 'scope': scope}, head)
                 elif path == '/api/system':
                     ready = self.server.ready()
                     with self.server.totals_lock:
                         totals = dict(self.server.totals)
-                    self._json(200, {'service': self.server.app, 'status': 'ready' if ready else 'not_ready', 'uptime_seconds': round(time.monotonic()-self.server.started, 3), 'health': {'status': 'ok'}, 'readiness': {'status': 'ready' if ready else 'not_ready', 'scope': READINESS_SCOPE}, 'http': totals, 'scope': 'HTTP serving process; domain/browser operations are not measured'}, head)
+                    scope = 'HTTP assets and application persistence availability' if self.server.persistence else READINESS_SCOPE
+                    self._json(200, {'service': self.server.app, 'status': 'ready' if ready else 'not_ready', 'uptime_seconds': round(time.monotonic()-self.server.started, 3), 'health': {'status': 'ok'}, 'readiness': {'status': 'ready' if ready else 'not_ready', 'scope': scope}, 'persistence': {'enabled': self.server.persistence is not None}, 'http': totals, 'scope': 'HTTP serving process; domain/browser operations are not measured'}, head)
                 else:
                     data = generate_latest(self.server.registry)
                     self.send_response(200)
@@ -324,6 +395,8 @@ class Handler(SimpleHTTPRequestHandler):
                         self.wfile.write(data)
                 return
             if path.startswith('/api/'):
+                if self._api(head):
+                    return
                 self._json(404, {'error': 'Unknown API endpoint'}, head)
                 return
             if path in ROUTES[self.server.app]:
@@ -336,12 +409,21 @@ class Handler(SimpleHTTPRequestHandler):
             with source:
                 size = os.fstat(source.fileno()).st_size
                 kind = {'.wasm': 'application/wasm', '.mjs': 'text/javascript', '.webmanifest': 'application/manifest+json', '.md': 'text/plain', '.sql': 'text/plain', '.ttf': 'font/ttf', '.woff2': 'font/woff2'}.get(Path(name).suffix) or mimetypes.guess_type(name)[0] or 'application/octet-stream'
+                entry = self.server.persistence is not None and (self.route != 'static' or relative.rstrip('/') in {self.server.index, str(Path(self.server.index).parent)})
+                body = source.read(1024 * 1024 + 1) if entry else None
+                if body is not None:
+                    if b'<meta name="server-persistence" content="enabled">' not in body:
+                        body = body.replace(b'<head>', b'<head><meta name="server-persistence" content="enabled">', 1)
+                    size = len(body)
                 self.send_response(200)
                 self.send_header('Content-Type', kind)
                 self.send_header('Content-Length', str(size))
                 self.end_headers()
                 if not head:
-                    self.copyfile(source, self.wfile)
+                    if body is not None:
+                        self.wfile.write(body)
+                    else:
+                        self.copyfile(source, self.wfile)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
             self._connection_failure()
         except OSError as error:
@@ -365,12 +447,27 @@ def make_server(host, port, root, app):
     except (OSError, ValueError) as error:
         os.close(root_fd)
         raise ValueError('Built application entry is missing or invalid') from error
+    persistence = None
+    if os.environ.get('APP_DATA_DIR'):
+        try:
+            try:
+                from persistence import Persistence
+            except ModuleNotFoundError as error:
+                if error.name != 'persistence':
+                    raise
+                from runtime.persistence import Persistence
+            persistence = Persistence(app, root)
+        except BaseException:
+            os.close(root_fd)
+            raise
     try:
         server = AppServer((host, port), functools.partial(Handler, directory=str(root)))
     except BaseException:
         os.close(root_fd)
         raise
     server.app, server.root, server.index = app, root, index
+    server.persistence = persistence
+    server.upload_slot = threading.BoundedSemaphore(1)
     server.root_fd, server.required_assets, server.asset_config_valid = root_fd, assets, valid
     server.started = time.monotonic()
     server.slots = threading.BoundedSemaphore(32)

@@ -5,9 +5,13 @@ RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements.txt
 FROM python:3.13-slim AS web
 WORKDIR /app
 COPY --from=dependencies /install /usr/local
-RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app && install -d -o 10001 -g 10001 -m 0700 /var/lib/product
 COPY tools/http_server.py /app/http_server.py
+COPY tools/persistence.py /app/persistence.py
+COPY tools/migrations/ /app/migrations/
 COPY docs/ /app/public/
+COPY tools/prepare_persistence_assets.py /app/prepare_persistence_assets.py
+RUN python /app/prepare_persistence_assets.py /app/public mavframe
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 USER 10001:10001
 EXPOSE 8080
